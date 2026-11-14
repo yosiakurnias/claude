@@ -1,0 +1,550 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#121212">
+<title>Lernpfad Voice</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="icon-192.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600&family=Geist+Mono:wght@500&display=swap" rel="stylesheet">
+<style>
+/* Same look as Lernpfad: Material dark grays, Geist, no colour except right/wrong signals. */
+:root{
+  --paper:#121212; --card:#1E1E1E; --sunken:#2A2A2A; --ink:#E3E3E3; --muted:#A3A3A3; --faint:#6F6F6F; --line:#2C2C2C; --line-strong:#3D3D3D;
+  --de:#E3E3E3; --en:#8AB4F8; --warn:#FFB74D; --bad:#EF5350; --good:#66BB6A; --rec:#EF5350;
+  --body:"Geist", "Segoe UI", system-ui, sans-serif; --mono:"Geist Mono", ui-monospace, Consolas, monospace; color-scheme:dark;
+}
+*{box-sizing:border-box}
+html,body{margin:0;height:100%}
+body{background:var(--paper);color:var(--ink);font:16px/1.55 var(--body);-webkit-font-smoothing:antialiased;padding:env(safe-area-inset-top) 0 env(safe-area-inset-bottom)}
+button,input,textarea,select{font:inherit;color:inherit}
+:focus-visible{outline:2px solid var(--ink);outline-offset:2px}
+.wrap{max-width:720px;margin:0 auto;padding:16px 16px 40px;display:flex;flex-direction:column;gap:14px;min-height:100%}
+header{display:flex;align-items:center;gap:10px}
+header h1{font-size:1.05rem;font-weight:600;margin:0;letter-spacing:-0.01em}
+.sp{flex:1}
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;height:36px;padding:0 12px;border-radius:8px;border:1px solid var(--line-strong);background:var(--card);cursor:pointer;font-size:.9rem;font-weight:500;white-space:nowrap}
+.btn:hover{background:var(--sunken)}
+.btn.primary{background:var(--ink);color:var(--paper);border-color:var(--ink)}
+.btn.ghost{background:transparent;border-color:transparent;color:var(--muted)}
+.btn[disabled]{opacity:.45;cursor:not-allowed}
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px 16px}
+.muted{color:var(--muted)} .small{font-size:.84rem}
+.eyebrow{font-size:.76rem;color:var(--muted);font-weight:500}
+.live{min-height:120px;font-size:1.08rem;line-height:1.7;word-wrap:break-word}
+.live .w{border-radius:3px}
+.live .en{color:var(--en)}
+.live .lc{text-decoration:underline dotted var(--warn);text-underline-offset:4px}
+.live .fill{color:var(--faint);font-style:italic}
+.live .nf{color:var(--faint)}
+.live .pause{display:inline-block;margin:0 3px;padding:0 5px;border-radius:4px;background:var(--sunken);color:var(--faint);font:500 .7rem var(--mono);vertical-align:2px}
+.legend{display:flex;gap:12px;flex-wrap:wrap;font-size:.76rem;color:var(--muted)}
+.legend i{font-style:normal}
+.rec{display:flex;flex-direction:column;align-items:center;gap:8px;padding:6px 0}
+.mic{width:84px;height:84px;border-radius:50%;border:0;background:var(--ink);color:var(--paper);display:grid;place-items:center;cursor:pointer;touch-action:manipulation}
+.mic svg{width:34px;height:34px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round}
+.mic.on{background:var(--rec);color:#fff;animation:pulse 1.4s ease-in-out infinite}
+@keyframes pulse{0%,100%{box-shadow:0 0 0 0 rgba(239,83,80,.45)}50%{box-shadow:0 0 0 14px rgba(239,83,80,0)}}
+@media (prefers-reduced-motion:reduce){.mic.on{animation:none}}
+.timer{font:500 .9rem var(--mono);color:var(--muted);font-variant-numeric:tabular-nums}
+textarea{width:100%;min-height:110px;border:1px solid var(--line-strong);background:var(--paper);border-radius:8px;padding:10px 12px;font-size:1rem;line-height:1.5;resize:vertical}
+textarea:focus,input:focus,select:focus{outline:none;border-color:var(--ink)}
+input[type=text],input[type=password],select{width:100%;border:1px solid var(--line-strong);background:var(--paper);border-radius:8px;padding:9px 11px}
+label.f{display:flex;flex-direction:column;gap:6px;font-size:.84rem;color:var(--muted);font-weight:500}
+.sig{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px}
+.sig div{background:var(--sunken);border-radius:8px;padding:8px 10px}
+.sig b{display:block;font-size:1.05rem;font-variant-numeric:tabular-nums}
+.sig span{font-size:.76rem;color:var(--muted)}
+.chips{display:flex;gap:6px;flex-wrap:wrap}
+.chip{border:1px solid var(--line-strong);background:var(--card);border-radius:99px;padding:4px 12px;font-size:.84rem;cursor:pointer}
+.chip.on{background:var(--ink);color:var(--paper);border-color:var(--ink)}
+pre{white-space:pre-wrap;word-wrap:break-word;background:var(--paper);border:1px solid var(--line);border-radius:8px;padding:10px 12px;font:400 .82rem/1.5 var(--mono);color:var(--muted);margin:0;max-height:240px;overflow:auto}
+.bar{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.notice{border:1px solid var(--line-strong);background:var(--sunken);border-radius:8px;padding:10px 12px;font-size:.9rem}
+.err{border-color:var(--bad)}
+.toast{position:fixed;left:50%;bottom:calc(24px + env(safe-area-inset-bottom));transform:translateX(-50%);background:var(--ink);color:var(--paper);padding:9px 14px;border-radius:8px;font-size:.88rem;font-weight:500;z-index:9}
+details summary{cursor:pointer;color:var(--muted);font-size:.88rem}
+.hist{display:flex;flex-direction:column;gap:6px}
+.hist button{text-align:left;background:var(--card);border:1px solid var(--line);border-radius:8px;padding:8px 10px;cursor:pointer;font-size:.88rem;color:var(--ink)}
+.hist button span{color:var(--muted);font-size:.76rem}
+[hidden]{display:none!important}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <svg width="22" height="22" viewBox="0 0 32 32" aria-hidden="true"><rect width="32" height="32" rx="8" fill="#E3E3E3"/><path d="M6 21c5 0 5-8 10-8s5-6 10-6" stroke="#121212" stroke-width="3" fill="none" stroke-linecap="round"/></svg>
+    <h1>Lernpfad Voice</h1><span class="sp"></span>
+    <button class="btn ghost" id="settingsBtn" aria-expanded="false">Settings</button>
+  </header>
+
+  <section class="card" id="settings" hidden>
+    <div style="display:flex;flex-direction:column;gap:12px">
+      <label class="f" for="modelSel">Speech model (runs on this device, free)
+        <select id="modelSel">
+          <option value="onnx-community/whisper-base">Balanced: about 80 MB, good for phones</option>
+          <option value="onnx-community/whisper-small">Accurate: about 250 MB, best on a laptop</option>
+          <option value="onnx-community/whisper-tiny">Fastest: about 40 MB, least accurate</option>
+        </select>
+      </label>
+      <label class="f" for="pauseMs">Count a pause from (seconds)
+        <input type="text" id="pauseMs" inputmode="decimal" value="0.8">
+      </label>
+      <label class="f" for="sens">Microphone sensitivity
+        <select id="sens"><option value="1.6">High (quiet room, soft voice)</option><option value="2.4" selected>Normal</option><option value="3.4">Low (noisy place)</option></select>
+      </label>
+      <div class="bar"><button class="btn primary" id="saveSettings">Save</button><span class="small muted" id="modelState"></span></div>
+      <p class="small muted" style="margin:0">Your voice never leaves this device. The model downloads once (on Wi-Fi is best) and is reused after that.</p>
+    </div>
+  </section>
+
+  <p class="notice" id="loadBox" hidden><span id="loadText">Preparing the speech model…</span><br><span class="small muted" id="loadSub"></span></p>
+  <p class="notice err" id="errBox" role="alert" hidden></p>
+
+  <section class="card">
+    <div class="bar"><span class="eyebrow">Live transcript</span><span class="sp"></span><span class="small muted" id="status"></span><span class="timer" id="timer">0:00</span></div>
+    <div class="live" id="live" aria-live="polite"><span class="muted">Tap the microphone and answer the way you'd say it, in German, English or both. Thinking out loud is good. Each phrase appears after you pause, and a short pause when you switch language helps it catch both.</span></div>
+    <div class="legend" style="margin-top:8px"><i>German</i><i style="color:var(--en)">English</i><i style="color:var(--faint)">äh / um</i><i><span class="pause" style="margin:0">1.2s</span> pause</i></div>
+  </section>
+
+  <div class="rec">
+    <button class="mic" id="mic" aria-label="Start recording"><svg viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg></button>
+    <div id="meter" style="width:120px;height:4px;border-radius:2px;background:var(--sunken);overflow:hidden"><div id="meterFill" style="height:100%;width:0;background:var(--ink)"></div></div>
+    <span class="small muted" id="micHint">Tap to start, tap again to stop</span>
+  </div>
+
+  <section class="card" id="result" hidden>
+    <div style="display:flex;flex-direction:column;gap:12px">
+      <label class="f" for="answer">Your answer: fix anything the recognizer got wrong
+        <textarea id="answer"></textarea>
+      </label>
+      <div>
+        <div class="eyebrow" style="margin-bottom:6px">How it sounded</div>
+        <div class="sig" id="sig"></div>
+      </div>
+      <div>
+        <div class="eyebrow" style="margin-bottom:6px">How sure were you? (the app's guess, change it if it's wrong)</div>
+        <div class="chips" id="sure" role="group" aria-label="Certainty"><button class="chip" data-v="sure">Sure</button><button class="chip" data-v="some hesitation">Some hesitation</button><button class="chip" data-v="unsure">Unsure</button><button class="chip" data-v="guessing">Guessing</button></div>
+      </div>
+      <div class="bar">
+        <button class="btn primary" id="copyAll">Copy for Lernpfad</button>
+        <button class="btn" id="copyText">Copy text only</button>
+        <button class="btn" id="shareBtn" hidden>Share</button>
+        <span class="sp"></span>
+        <button class="btn ghost" id="again">New answer</button>
+      </div>
+      <details><summary>What gets pasted</summary><pre id="preview"></pre></details>
+    </div>
+  </section>
+
+  <section id="histSec" hidden>
+    <details><summary>Recent answers</summary><div class="hist" id="hist" style="margin-top:8px"></div></details>
+  </section>
+
+  <p class="small muted" style="margin-top:auto">Paste into Lernpfad's answer box. The tutor reads your corrected text as your answer, and uses the note about pauses, restarts and language switches to judge how sure you were.</p>
+</div>
+
+<script>
+"use strict";
+/* ---------- helpers ---------- */
+const $ = s => document.querySelector(s);
+const $$ = s => [...document.querySelectorAll(s)];
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const store = { get(k, d){ try{ const v = localStorage.getItem("lv-" + k); return v === null ? d : JSON.parse(v); }catch(e){ return d; } }, set(k, v){ try{ localStorage.setItem("lv-" + k, JSON.stringify(v)); }catch(e){} } };
+function toast(m){ const d = document.createElement("div"); d.className = "toast"; d.textContent = m; d.setAttribute("role","status"); document.body.appendChild(d); setTimeout(() => d.remove(), 2200); }
+function showErr(m){ const b = $("#errBox"); b.textContent = m; b.hidden = !m; }
+const SR = 16000;
+const TRANSFORMERS_URL = "https://cdn.jsdelivr.net/npm/@huggingface/transformers@4.3.2";
+
+/* ---------- German / English word tagging (no network, no model) ---------- */
+const DE = new Set("ich du er sie es wir ihr und oder aber nicht kein keine keinen keinem der den dem des ein eine einen einem einer eines ist bin bist sind seid war waren wäre habe hast hat haben hatte hätte mit von zu zum zur im auf für über unter nach bei aus auch noch schon nur sehr gut ja nein wer wie wo warum wann dass weil wenn ob mein meine meinen meinem dein deine sein seine ihre unser euer gestern heute morgen jetzt immer hier dann doch mal etwas viel ganz gerne gern möchte möchten kann können muss müssen will wollen soll sollen werde wirst wird werden würde nicht nichts mich dich sich uns euch mir dir ihm ihnen diese dieser dieses diesen jeder jede alle einmal wieder vielleicht natürlich genau richtig falsch weiß weiss glaube denke meinst heißt heisst sagen gehen machen gemacht gesagt gegangen getroffen gesprochen arbeit labor nur noch oft danke bitte ach na tja nee jaja".split(" "));
+const EN = new Set("i you he she it we they and or but not no the a an is am are were have has had do does did with of to for on at from about my your his her our their this that these those what who how where why when because if very good yes just like think know want can would should could me him them it's i'm don't doesn't didn't can't won't isn't aren't wasn't i've i'd i'll you're we're they're that's there's there here then now really maybe something thing things sorry okay ok yeah well actually mean said say going go got get make made talked talk thesis yesterday today tomorrow friend met meet because which also".split(" "));
+const AMBIG = new Set(["in","so","was","also","will","die","man","war","hat","bad","fast","rat","hand","name","art","wind","land","arm","bitte"]);
+function langOf(word){
+  const w = word.toLowerCase().replace(/[^a-zäöüß'-]/g, "");
+  if (!w || AMBIG.has(w)) return null;
+  if (/[äöüß]/.test(w)) return "de";
+  const de = DE.has(w), en = EN.has(w);
+  if (de && !en) return "de";
+  if (en && !de) return "en";
+  if (/(ung|keit|heit|lich|isch|chen|schaft|ieren|ierte?)$/.test(w) || /^ge\w{3,}(t|en)$/.test(w) || /sch|tz|pf/.test(w)) return "de";
+  if (/(ing|ly|ed|ness|ful|ous|ship)$/.test(w) || /th|wh|^qu/.test(w) || /(ee|oo)/.test(w) && !/(ie)/.test(w)) return "en";
+  return null;
+}
+/* words: [{text, seg, segLang}]; unknown words take a neighbour's language within the same phrase, else the phrase's detected language */
+function tagWords(words){
+  const tags = words.map(w => langOf(w.text));
+  for (let i = 0; i < tags.length; i++){
+    if (tags[i]) continue;
+    const seg = words[i].seg;
+    let j = i - 1; while (j >= 0 && !tags[j] && words[j].seg === seg) j--;
+    let k = i + 1; while (k < tags.length && !tags[k] && words[k].seg === seg) k++;
+    const prev = j >= 0 && words[j].seg === seg ? tags[j] : null, next = k < tags.length && words[k].seg === seg ? tags[k] : null;
+    tags[i] = prev || next || words[i].segLang || "de";
+  }
+  return tags;
+}
+
+/* ---------- analysis over transcribed speech segments ---------- */
+const FILLER = /^(äh+m?|ähm+|öh+m?|eh+m?|ehm+|hm+|hmm+|mhm|mm+|uh+m?|um+|umm+|erm+|uhm+|ah+m?)$/i;
+const norm = w => w.toLowerCase().replace(/[.,!?;:"'“”„()…]/g, "");
+const bare = w => w.replace(/[.,!?;:"“”„()…]+$/g, "");
+/* segments: [{start, end, text, sound}] in ms from the start of the recording */
+function wordsFrom(segments){
+  const words = [];
+  segments.forEach((s, si) => {
+    const parts = s.text.split(/\s+/).filter(Boolean);
+    if (!parts.length) return;
+    const dur = Math.max(1, s.end - s.start), step = dur / parts.length;
+    parts.forEach((p, i) => words.push({text: p, start: Math.round(s.start + i * step), end: Math.round(s.start + (i + 1) * step), seg: si, segLang: s.lang || null}));
+  });
+  const tags = tagWords(words); words.forEach((w, i) => w.lang = tags[i]);
+  return words;
+}
+function analyze(segments, opts){
+  const pauseMs = (opts && opts.pauseMs) || 800;
+  const words = wordsFrom(segments);
+  const real = words.filter(w => !FILLER.test(norm(w.text)));
+  const textFillers = words.filter(w => FILLER.test(norm(w.text))).map(w => norm(w.text));
+  const soundFillers = segments.filter(s => s.sound).length;  /* short voiced bits with no words: äh/hmm sounds */
+  const spoken = segments.filter(s => !s.sound || true);
+  const pauses = [];
+  for (let i = 1; i < spoken.length; i++){
+    const gap = spoken[i].start - spoken[i-1].end;
+    if (gap >= pauseMs){ const nx = spoken[i]; const nextWord = nx.sound ? "(äh)" : (nx.text.trim().split(/\s+/)[0] || "…"); pauses.push({ms: gap, before: nx.sound ? nextWord : bare(nextWord)}); }
+  }
+  const firstStart = segments.length ? segments[0].start : null;
+  const restarts = [];
+  for (let i = 1; i < real.length; i++){
+    const a = norm(real[i-1].text), b = norm(real[i].text);
+    if (a && a === b) restarts.push(bare(real[i].text));
+    else if (/-$/.test(real[i-1].text) && b.startsWith(a.replace(/-$/, ""))) restarts.push(bare(real[i-1].text) + " " + bare(real[i].text));
+  }
+  const byLang = {}; real.forEach(w => { byLang[w.lang] = (byLang[w.lang] || 0) + 1; });
+  const segs = []; real.forEach(w => { const s = segs[segs.length-1]; if (s && s.lang === w.lang) s.words.push(bare(w.text)); else segs.push({lang: w.lang, words: [bare(w.text)]}); });
+  const spanMs = segments.length ? segments[segments.length-1].end - firstStart : 0;
+  const speakMs = Math.max(1, segments.filter(s => s.text.trim()).reduce((t, s) => t + (s.end - s.start), 0));
+  const wpm = real.length ? Math.round(real.length / (speakMs / 60000)) : 0;
+  const fillersN = textFillers.length + soundFillers;
+  let score = 100;
+  score -= Math.min(36, pauses.filter(p => p.ms >= 1500).length * 12 + pauses.filter(p => p.ms < 1500).length * 8);
+  score -= Math.min(24, fillersN * 8);
+  score -= Math.min(24, restarts.length * 12);
+  if (firstStart != null && firstStart > 3000) score -= 10;
+  if (real.length && wpm < 70) score -= 8;
+  const guess = score >= 80 ? "sure" : score >= 60 ? "some hesitation" : score >= 40 ? "unsure" : "guessing";
+  return {words, wordCount: real.length, fillers: textFillers, soundFillers, fillersN, pauses, firstStartMs: firstStart, restarts, byLang, segments: segs, switches: Math.max(0, segs.length - 1), spanMs, wpm, score, guess};
+}
+function diffWords(said, fixed){
+  const a = said.split(/\s+/).filter(Boolean), b = fixed.split(/\s+/).filter(Boolean);
+  const A = a.map(norm), B = b.map(norm);
+  const n = A.length, m = B.length, L = Array.from({length:n+1}, () => new Array(m+1).fill(0));
+  for (let i = n-1; i >= 0; i--) for (let j = m-1; j >= 0; j--) L[i][j] = A[i] === B[j] ? L[i+1][j+1] + 1 : Math.max(L[i+1][j], L[i][j+1]);
+  const ops = []; let i = 0, j = 0, del = [], ins = [];
+  const flush = () => { if (del.length || ins.length){ ops.push({from: del.join(" "), to: ins.join(" ")}); del = []; ins = []; } };
+  while (i < n || j < m){
+    if (i < n && j < m && A[i] === B[j]){ flush(); i++; j++; }
+    else if (j < m && (i >= n || L[i][j+1] >= L[i+1][j])){ ins.push(b[j]); j++; }
+    else { del.push(a[i]); i++; }
+  }
+  flush();
+  return ops.filter(o => !(o.from && !o.to && (FILLER.test(norm(o.from)) || /-$/.test(o.from))));
+}
+const LANG_NAME = {de:"German", en:"English"};
+const secs = ms => (ms/1000).toFixed(1).replace(/\.0$/, "") + " s";
+function noteFor(an, said, fixed, certainty){
+  const parts = [];
+  parts.push(secs(an.spanMs) + ", " + an.wordCount + " words" + (an.wpm ? " (" + an.wpm + " wpm)" : ""));
+  if (an.firstStartMs != null && an.firstStartMs > 1500) parts.push("started after " + secs(an.firstStartMs));
+  if (an.pauses.length){ const top = an.pauses.slice().sort((x,y) => y.ms - x.ms).slice(0,3); parts.push(an.pauses.length + " pause" + (an.pauses.length>1?"s":"") + " (" + top.map(p => secs(p.ms) + " before \"" + p.before + "\"").join(", ") + ")"); }
+  else parts.push("no long pauses");
+  if (an.fillersN){ const kinds = [...new Set(an.fillers)]; parts.push(an.fillersN + " filler" + (an.fillersN>1?"s":"") + (kinds.length ? " (" + kinds.join(", ") + ")" : "") + (an.soundFillers ? (kinds.length ? " incl. " : " (") + an.soundFillers + " wordless hesitation sound" + (an.soundFillers>1?"s":"") + (kinds.length ? "" : ")") : "")); }
+  if (an.restarts.length) parts.push(an.restarts.length + " restart" + (an.restarts.length>1?"s":"") + " (\"" + an.restarts.slice(0,3).join("\", \"") + "\")");
+  const total = Object.values(an.byLang).reduce((s,v) => s+v, 0) || 1;
+  const langs = Object.entries(an.byLang).sort((x,y) => y[1]-x[1]).map(([l,c]) => (LANG_NAME[l]||l) + " " + Math.round(c*100/total) + "%");
+  if (langs.length > 1){ const en = an.segments.filter(s => s.lang === "en").map(s => s.words.join(" ")).slice(0,3); parts.push(langs.join(" / ") + " (estimated; English: \"" + en.join("\", \"") + "\")"); }
+  else if (langs.length) parts.push(langs[0].replace(/ 100%$/, " only"));
+  const saidClean = said.split(/\s+/).filter(w => w && !FILLER.test(norm(w))).join(" ");
+  const edits = diffWords(saidClean, fixed);
+  if (edits.length) parts.push("edited after speaking: " + edits.slice(0,6).map(e => (e.from || "∅") + " → " + (e.to || "∅")).join("; "));
+  parts.push("certainty: " + certainty + (certainty === an.guess ? " (from the audio)" : " (my own rating; audio suggested " + an.guess + ")"));
+  return "[Spoken: \"" + said.trim() + "\" · " + parts.join(" · ") + "]";
+}
+
+/* ---------- on-device Whisper in a worker ---------- */
+const WORKER_SRC = `
+import { pipeline, env, Tensor } from "${TRANSFORMERS_URL}";
+env.allowLocalModels = false;
+let asr = null, loading = null;
+const HALLU = /(untertitel|amara\\.org|vielen dank f(ü|u)r.{0,12}zuschauen|thanks? (you )?for watching|subscribe|copyright|www\\.|\\[musi[ck]\\]|\\(musi[ck]\\))/i;
+async function load(model, device){
+  const dtype = device === "webgpu" ? { encoder_model: /small/.test(model) ? "fp16" : "fp32", decoder_model_merged: "q4" } : "q8";
+  asr = await pipeline("automatic-speech-recognition", model, { device, dtype, progress_callback: p => postMessage({ type: "progress", p }) });
+  postMessage({ type: "ready", device });
+}
+const NAMES = { de: "german", en: "english" };
+/* Whisper's own language guess, limited to the languages the learner mixes. */
+async function detectLang(audio, langs){
+  try {
+    const gc = asr.model.generation_config || {};
+    const l2i = gc.lang_to_id || {};
+    const sot = gc.decoder_start_token_id ?? 50258;
+    const { input_features } = await asr.processor(audio);
+    const dec = new Tensor("int64", BigInt64Array.from([BigInt(sot)]), [1, 1]);
+    const out = await asr.model({ input_features, decoder_input_ids: dec });
+    const logits = out.logits.data, V = out.logits.dims.at(-1), base = logits.length - V;
+    const scores = langs.map(c => [c, logits[base + l2i["<|" + c + "|>"]]]).filter(x => Number.isFinite(x[1]));
+    if (!scores.length) return { code: langs[0], name: NAMES[langs[0]] || langs[0], p: null };
+    const mx = Math.max(...scores.map(x => x[1])), ex = scores.map(([c, v]) => [c, Math.exp(v - mx)]), sum = ex.reduce((s, x) => s + x[1], 0);
+    ex.sort((a, b) => b[1] - a[1]);
+    return { code: ex[0][0], name: NAMES[ex[0][0]] || ex[0][0], p: ex[0][1] / sum };
+  } catch (e) {
+    postMessage({ type: "progress", p: { status: "langerr", message: String(e && e.message || e) } });
+    return { code: langs[0], name: NAMES[langs[0]] || langs[0], p: null };
+  }
+}
+self.onmessage = async ({ data }) => {
+  try {
+    if (data.type === "load"){
+      if (!loading) loading = load(data.model, data.device).catch(async e => {
+        if (data.device === "webgpu"){ postMessage({ type: "progress", p: { status: "fallback" } }); await load(data.model, "wasm"); }
+        else throw e;
+      });
+      await loading;
+    } else if (data.type === "transcribe"){
+      await loading;
+      const lang = await detectLang(data.audio, data.langs || ["de", "en"]);
+      const out = await asr(data.audio, { task: "transcribe", language: lang.name, chunk_length_s: data.audio.length > 16000 * 28 ? 30 : 0 });
+      let text = (out && out.text || "").trim();
+      if (HALLU.test(text) && data.quiet) text = "";
+      text = text.replace(/^[\\s.…-]+$/, "");
+      postMessage({ type: "result", id: data.id, text, lang: lang.code, p: lang.p });
+    }
+  } catch (e) { postMessage({ type: "error", id: data.id, message: String(e && e.message || e) }); }
+};`;
+let worker = null, ready = false, readyWaiters = [], pendingJobs = new Map(), jobSeq = 0;
+function modelId(){ return store.get("model", "onnx-community/whisper-base"); }
+async function pickDevice(){
+  /* Use the graphics chip only when it really answers; otherwise run on the processor. */
+  try{ if (navigator.gpu){ const a = await navigator.gpu.requestAdapter(); if (a) return "webgpu"; } }catch(e){}
+  return "wasm";
+}
+function ensureWorker(){
+  if (worker) return;
+  const url = URL.createObjectURL(new Blob([WORKER_SRC], {type: "text/javascript"}));
+  worker = new Worker(url, {type: "module"});
+  const files = {};
+  worker.onmessage = ({data}) => {
+    if (data.type === "progress"){
+      const p = data.p || {};
+      if (p.status === "langerr"){ console.warn("language check failed:", p.message); return; }
+      if (p.status === "fallback"){ $("#loadSub").textContent = "Your graphics chip isn't supported here, so it runs on the processor (slower)."; return; }
+      if (p.status === "progress" && p.file){ files[p.file] = {loaded: p.loaded || 0, total: p.total || 0}; }
+      const tot = Object.values(files).reduce((s,f) => s + (f.total||0), 0), got = Object.values(files).reduce((s,f) => s + (f.loaded||0), 0);
+      $("#loadBox").hidden = false;
+      $("#loadText").textContent = tot ? "Downloading the speech model: " + Math.round(got/1048576) + " of " + Math.round(tot/1048576) + " MB" : "Preparing the speech model…";
+      if (!$("#loadSub").textContent) $("#loadSub").textContent = "Only the first time. After that it loads from this device.";
+    } else if (data.type === "ready"){
+      ready = true; $("#loadBox").hidden = true; $("#modelState").textContent = "Model ready (" + (data.device === "webgpu" ? "graphics chip" : "processor") + ")";
+      readyWaiters.forEach(f => f()); readyWaiters = [];
+    } else if (data.type === "result"){
+      const job = pendingJobs.get(data.id); if (job){ pendingJobs.delete(data.id); job.resolve({text: data.text, lang: data.lang, p: data.p}); }
+    } else if (data.type === "error"){
+      if (data.id != null && pendingJobs.has(data.id)){ pendingJobs.get(data.id).resolve({text: ""}); pendingJobs.delete(data.id); }
+      showErr("The speech model hit a problem: " + data.message + ". Try again, or pick a smaller model in Settings.");
+    }
+  };
+  worker.onerror = e => showErr("Couldn't start the speech model. Use an up-to-date Chrome or Edge. (" + (e.message || "worker error") + ")");
+  const w = worker; pickDevice().then(device => { if (worker === w) w.postMessage({type: "load", model: modelId(), device}); });
+}
+function transcribe(audio, quiet){
+  ensureWorker();
+  return new Promise(resolve => { const id = ++jobSeq; pendingJobs.set(id, {resolve}); worker.postMessage({type: "transcribe", id, audio, quiet}, [audio.buffer]); });
+}
+
+/* ---------- microphone + voice activity detection ---------- */
+const FRAME = 480;                      /* 30 ms at 16 kHz */
+let ctx = null, src = null, node = null, stream = null, t0 = 0, tick = null;
+let frameBuf = new Float32Array(0), allSamples = 0;
+let noise = 0.004, inSpeech = false, voicedRun = 0, silentRun = 0, segStartSample = 0, lastVoicedSample = 0, segFrames = [], preRoll = [], segPeak = 0;
+let segments = [], queue = Promise.resolve(), recording = false;
+const S = { pause: store.get("pause", "0.8"), sens: store.get("sens", "2.4") };
+
+function resampleTo16k(input, rate){
+  if (rate === SR) return input;
+  const ratio = rate / SR, out = new Float32Array(Math.floor(input.length / ratio));
+  for (let i = 0; i < out.length; i++){ const x = i * ratio, i0 = Math.floor(x), f = x - i0; out[i] = (input[i0] || 0) * (1 - f) + (input[i0 + 1] || 0) * f; }
+  return out;
+}
+function onAudio(chunk){
+  const merged = new Float32Array(frameBuf.length + chunk.length); merged.set(frameBuf); merged.set(chunk, frameBuf.length);
+  let off = 0;
+  while (merged.length - off >= FRAME){ processFrame(merged.subarray(off, off + FRAME)); off += FRAME; }
+  frameBuf = merged.slice(off);
+}
+function processFrame(f){
+  let sum = 0; for (let i = 0; i < f.length; i++) sum += f[i] * f[i];
+  const rms = Math.sqrt(sum / f.length);
+  const thr = Math.max(0.006, noise * parseFloat(S.sens || "2.4"));
+  const voiced = rms > thr;
+  $("#meterFill").style.width = Math.min(100, Math.round(rms / (thr * 2.5) * 100)) + "%";
+  const frameCopy = f.slice(0);
+  if (!inSpeech){
+    if (!voiced) noise = noise * 0.97 + rms * 0.03;
+    preRoll.push(frameCopy); if (preRoll.length > 8) preRoll.shift();
+    voicedRun = voiced ? voicedRun + 1 : 0;
+    if (voicedRun >= 3){ inSpeech = true; silentRun = 0; segFrames = preRoll.slice(); preRoll = []; segStartSample = allSamples - (segFrames.length - 1) * FRAME; segPeak = rms; setStatus("hearing you"); }
+  } else {
+    segFrames.push(frameCopy); segPeak = Math.max(segPeak, rms);
+    if (voiced){ silentRun = 0; lastVoicedSample = allSamples + FRAME; } else silentRun++;
+    const segLenMs = segFrames.length * 30;
+    if (silentRun * 30 >= 360 || segLenMs >= 24000) endSegment();
+  }
+  allSamples += FRAME;
+}
+function endSegment(){
+  if (!inSpeech) return;
+  inSpeech = false; voicedRun = 0;
+  const keep = Math.max(1, segFrames.length - Math.max(0, silentRun - 5));   /* keep ~150 ms after the last voiced frame */
+  const frames = segFrames.slice(0, keep); segFrames = []; silentRun = 0;
+  const audio = new Float32Array(frames.length * FRAME); frames.forEach((fr, i) => audio.set(fr, i * FRAME));
+  const start = Math.round(segStartSample / SR * 1000), end = Math.round(Math.max(lastVoicedSample, segStartSample + audio.length) / SR * 1000);
+  const seg = {start, end, text: "", pending: true, sound: false};
+  segments.push(seg); renderLive(); setStatus("transcribing");
+  const short = end - start < 900, quiet = segPeak < 0.03;
+  queue = queue.then(() => transcribe(audio, short || quiet)).then(r => {
+    seg.text = (r && r.text) || ""; seg.lang = r && r.lang; seg.pending = false;
+    const w = seg.text.split(/\s+/).filter(Boolean);
+    if (!w.length || (short && w.every(x => FILLER.test(norm(x))))){ if (!w.length) seg.sound = true; }
+    renderLive(); if (!segments.some(s => s.pending)) setStatus(recording ? "listening" : "");
+  });
+}
+function setStatus(t){ $("#status").textContent = t ? t + " · " : ""; }
+async function start(){
+  showErr("");
+  if (!navigator.mediaDevices){ showErr("This browser can't record audio. Use Chrome on Android or Chrome/Edge on your laptop."); return; }
+  ensureWorker();
+  try{ stream = await navigator.mediaDevices.getUserMedia({audio: {echoCancellation: true, noiseSuppression: true, autoGainControl: true, channelCount: 1}}); }
+  catch(e){ showErr("Microphone access was blocked. Allow the microphone for this site in your browser settings, then try again."); return; }
+  try{ ctx = new AudioContext({sampleRate: SR}); }catch(e){ ctx = new AudioContext(); }
+  const rate = ctx.sampleRate;
+  const workletSrc = "class P extends AudioWorkletProcessor{process(i){const c=i[0]&&i[0][0];if(c)this.port.postMessage(c.slice(0));return true}}registerProcessor('cap',P)";
+  src = ctx.createMediaStreamSource(stream);
+  try{
+    await ctx.audioWorklet.addModule(URL.createObjectURL(new Blob([workletSrc], {type: "text/javascript"})));
+    node = new AudioWorkletNode(ctx, "cap");
+    node.port.onmessage = ev => { if (recording) onAudio(resampleTo16k(ev.data, rate)); };
+    src.connect(node);
+  }catch(e){
+    /* Older browsers or a page opened from a file: fall back to the older audio API. */
+    node = ctx.createScriptProcessor(2048, 1, 1);
+    node.onaudioprocess = ev => { if (recording) onAudio(resampleTo16k(ev.inputBuffer.getChannelData(0).slice(0), rate)); };
+    const mute = ctx.createGain(); mute.gain.value = 0;
+    src.connect(node); node.connect(mute); mute.connect(ctx.destination);
+  }
+  segments = []; frameBuf = new Float32Array(0); allSamples = 0; inSpeech = false; voicedRun = 0; silentRun = 0; preRoll = []; noise = 0.004; lastAn = null;
+  recording = true; t0 = Date.now(); tick = setInterval(setTimer, 250); setTimer();
+  $("#result").hidden = true; renderLive(); setStatus(ready ? "listening" : "loading model");
+  $("#mic").classList.add("on"); $("#mic").setAttribute("aria-label", "Stop recording"); $("#micHint").textContent = "Recording. Tap to stop.";
+}
+async function stop(){
+  recording = false; endSegment();
+  clearInterval(tick); tick = null; $("#meterFill").style.width = "0";
+  try{ src && src.disconnect(); node && node.disconnect(); }catch(e){}
+  if (stream) stream.getTracks().forEach(t => t.stop()); stream = null;
+  try{ ctx && ctx.close(); }catch(e){} ctx = null;
+  $("#mic").classList.remove("on"); $("#mic").setAttribute("aria-label", "Start recording");
+  $("#micHint").textContent = segments.some(s => s.pending) ? "Finishing the last phrase…" : "Tap to start, tap again to stop";
+  $("#mic").disabled = true;
+  await queue;
+  $("#mic").disabled = false; $("#micHint").textContent = "Tap to start, tap again to stop"; setStatus("");
+  finish();
+}
+$("#mic").onclick = () => { if (recording) stop(); else start(); };
+function setTimer(){ const s = Math.floor((Date.now() - t0) / 1000); $("#timer").textContent = Math.floor(s/60) + ":" + String(s%60).padStart(2,"0"); }
+
+function renderLive(){
+  const pauseMs = (parseFloat(S.pause) || 0.8) * 1000;
+  const done = segments.filter(s => !s.pending);
+  const words = wordsFrom(done);
+  let html = "", prevSeg = null;
+  segments.forEach((s, si) => {
+    if (prevSeg && s.start - prevSeg.end >= pauseMs) html += ' <span class="pause">' + secs(s.start - prevSeg.end).replace(" ", "") + '</span>';
+    prevSeg = s;
+    if (s.pending){ html += ' <span class="nf">…</span>'; return; }
+    if (s.sound){ html += ' <span class="fill">(äh)</span>'; return; }
+    words.filter(w => w.seg === done.indexOf(s)).forEach(w => {
+      const cls = ["w"]; if (w.lang === "en") cls.push("en"); if (FILLER.test(norm(w.text))) cls.push("fill");
+      html += ' <span class="' + cls.join(" ") + '">' + esc(w.text) + '</span>';
+    });
+  });
+  $("#live").innerHTML = html.trim() || '<span class="muted">' + (recording ? "Listening… start speaking." : "Nothing yet.") + '</span>';
+}
+
+/* ---------- result ---------- */
+let lastAn = null, lastSaid = "", certainty = null;
+function finish(){
+  const usable = segments.filter(s => !s.pending);
+  if (!usable.some(s => s.text.trim())){ $("#live").innerHTML = '<span class="muted">Nothing was picked up. Speak a little closer to the microphone, or raise the sensitivity in Settings.</span>'; return; }
+  lastAn = analyze(usable, {pauseMs: (parseFloat(S.pause) || 0.8) * 1000});
+  lastSaid = usable.map(s => s.sound ? "(äh)" : s.text.trim()).filter(Boolean).join(" ");
+  $("#answer").value = lastAn.words.filter(w => !FILLER.test(norm(w.text))).map(w => w.text).join(" ");
+  certainty = lastAn.guess; paintSure();
+  const total = Object.values(lastAn.byLang).reduce((s,v) => s+v, 0) || 1;
+  const langLine = Object.entries(lastAn.byLang).sort((x,y) => y[1]-x[1]).map(([l,c]) => (LANG_NAME[l]||l) + " " + Math.round(c*100/total) + "%").join(" · ");
+  const longest = lastAn.pauses.length ? Math.max(...lastAn.pauses.map(p => p.ms)) : 0;
+  $("#sig").innerHTML = [
+    [secs(lastAn.spanMs), lastAn.wordCount + " words · " + (lastAn.wpm || 0) + " wpm"],
+    [String(lastAn.pauses.length), "pauses" + (longest ? " · longest " + secs(longest) : "")],
+    [String(lastAn.fillersN), "fillers and hesitation sounds"],
+    [String(lastAn.restarts.length), "restarts / repeats"],
+    [langLine || "–", lastAn.switches + " language switch" + (lastAn.switches === 1 ? "" : "es") + " (estimated)"]
+  ].map(([b,s]) => '<div><b>' + esc(b) + '</b><span>' + esc(s) + '</span></div>').join("");
+  $("#result").hidden = false; updatePreview(); saveHistory();
+  $("#result").scrollIntoView({behavior: "smooth", block: "start"});
+}
+function paintSure(){ $$("#sure .chip").forEach(c => c.classList.toggle("on", c.dataset.v === certainty)); }
+$$("#sure .chip").forEach(c => c.onclick = () => { certainty = c.dataset.v; paintSure(); updatePreview(); });
+$("#answer").addEventListener("input", updatePreview);
+function payload(){ return $("#answer").value.trim() + "\n\n" + noteFor(lastAn, lastSaid, $("#answer").value, certainty); }
+function updatePreview(){ if (lastAn) $("#preview").textContent = payload(); }
+async function copy(text){
+  try{ await navigator.clipboard.writeText(text); toast("Copied. Paste it into Lernpfad."); }
+  catch(e){ const ta = document.createElement("textarea"); ta.value = text; document.body.appendChild(ta); ta.select(); try{ document.execCommand("copy"); toast("Copied"); }catch(_){ toast("Couldn't copy. Select the text and copy it yourself."); } ta.remove(); }
+}
+$("#copyAll").onclick = () => { if (lastAn){ saveHistory(); copy(payload()); } };
+$("#copyText").onclick = () => copy($("#answer").value.trim());
+if (navigator.share){ $("#shareBtn").hidden = false; $("#shareBtn").onclick = () => navigator.share({text: payload()}).catch(() => {}); }
+$("#again").onclick = () => { $("#result").hidden = true; segments = []; lastAn = null; $("#timer").textContent = "0:00"; $("#live").innerHTML = '<span class="muted">Tap the microphone to answer.</span>'; window.scrollTo({top: 0, behavior: "smooth"}); };
+
+/* ---------- history + settings ---------- */
+function saveHistory(){
+  if (!lastAn) return;
+  const h = store.get("hist", []); const item = {at: Date.now(), text: $("#answer").value.trim(), payload: payload()};
+  if (h[0] && h[0].payload.split("[Spoken:")[1] === item.payload.split("[Spoken:")[1]) h[0] = item; else h.unshift(item);
+  store.set("hist", h.slice(0, 20)); drawHistory();
+}
+function drawHistory(){
+  const h = store.get("hist", []); $("#histSec").hidden = !h.length;
+  $("#hist").innerHTML = h.map((x,i) => '<button data-h="' + i + '">' + esc(x.text.slice(0, 90) || "(empty)") + '<br><span>' + new Date(x.at).toLocaleString() + ' · tap to copy again</span></button>').join("");
+  $$("#hist button").forEach(b => b.onclick = () => copy(h[+b.dataset.h].payload));
+}
+$("#settingsBtn").onclick = () => { const s = $("#settings"); s.hidden = !s.hidden; $("#settingsBtn").setAttribute("aria-expanded", String(!s.hidden)); };
+function loadSettings(){ $("#modelSel").value = modelId(); $("#pauseMs").value = S.pause; $("#sens").value = S.sens; }
+$("#saveSettings").onclick = () => {
+  const m = $("#modelSel").value, changed = m !== modelId();
+  store.set("model", m); S.pause = $("#pauseMs").value.trim() || "0.8"; S.sens = $("#sens").value; store.set("pause", S.pause); store.set("sens", S.sens);
+  toast(changed ? "Saved. Loading the new model…" : "Saved"); $("#settings").hidden = true;
+  if (changed && worker){ worker.terminate(); worker = null; ready = false; ensureWorker(); }
+};
+loadSettings(); drawHistory();
+/* Start loading the model right away so the first answer isn't slow. */
+setTimeout(ensureWorker, 300);
+if ("serviceWorker" in navigator && location.protocol === "https:") navigator.serviceWorker.register("sw.js").catch(() => {});
+</script>
+</body>
+</html>
