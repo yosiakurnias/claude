@@ -340,12 +340,34 @@ function toast(msg, ms=2600){
   const d = document.createElement("div"); d.className="toast"; d.textContent=msg; d.setAttribute("role","status");
   document.body.appendChild(d); setTimeout(()=>d.remove(), ms);
 }
-function dialog(html, onMount){
-  const o = $("#overlay");
+/* opts.persistent: Escape and backdrop clicks do nothing (progress dialogs). opts.onDismiss: runs when Escape or a backdrop click closes it. */
+const FOCUSABLE = 'button:not([disabled]),input:not([disabled]),textarea:not([disabled]),select:not([disabled]),a[href],[tabindex]:not([tabindex="-1"])';
+function dialog(html, onMount, opts){
+  opts = opts || {};
+  const o = $("#overlay"), prev = document.activeElement;
   o.innerHTML = '<div class="modal" role="dialog" aria-modal="true"><div class="card stack">'+html+'</div></div>';
-  const close = () => { o.innerHTML = ""; };
-  $(".modal", o).addEventListener("click", e => { if (e.target.classList.contains("modal")) close(); });
-  onMount && onMount($(".modal .card", o), close);
+  const modal = $(".modal", o), card = $(".card", modal);
+  const head = $("h2,h3", card);
+  if (head){ head.id = "dlgTitle"; modal.setAttribute("aria-labelledby", "dlgTitle"); } else modal.setAttribute("aria-label", opts.label || "Dialog");
+  let closed = false;
+  const close = () => {
+    if (closed) return; closed = true;
+    if (!o.contains(modal)) return;   // another dialog already replaced this one
+    o.innerHTML = "";
+    try{ if (prev && prev !== document.body && document.contains(prev)) prev.focus(); }catch(e){}
+  };
+  modal._dismiss = () => { if (opts.persistent) return; close(); if (opts.onDismiss) opts.onDismiss(); };
+  modal.addEventListener("click", e => { if (e.target === modal) modal._dismiss(); });
+  modal.addEventListener("keydown", e => {
+    if (e.key !== "Tab") return;
+    const f = $$(FOCUSABLE, card).filter(x => x.offsetParent !== null);
+    if (!f.length){ e.preventDefault(); return; }
+    const first = f[0], last = f[f.length - 1];
+    if (e.shiftKey && (document.activeElement === first || !card.contains(document.activeElement))){ e.preventDefault(); last.focus(); }
+    else if (!e.shiftKey && document.activeElement === last){ e.preventDefault(); first.focus(); }
+  });
+  onMount && onMount(card, close);
+  if (!card.contains(document.activeElement)){ const f = $(FOCUSABLE, card); (f || card).focus(); }
   return close;
 }
 function confirmBox(text, yesLabel="Yes"){
@@ -353,7 +375,7 @@ function confirmBox(text, yesLabel="Yes"){
     dialog('<p>'+esc(text)+'</p><div class="bar"><span class="sp"></span><button class="btn" id="cNo">Cancel</button><button class="btn primary" id="cYes">'+esc(yesLabel)+'</button></div>', (el, close) => {
       $("#cNo",el).onclick = () => { close(); res(false); };
       $("#cYes",el).onclick = () => { close(); res(true); };
-    });
+    }, {onDismiss: () => res(false), label: text});
   });
 }
 const sampleErr = e => ({
@@ -378,8 +400,17 @@ const DEFAULT_SETTINGS = { vault:"Obsidian Vault", folder:"Learning", depth:"def
 function applyMode(mode){ const r = document.documentElement; if (mode === "light" || mode === "dark") r.setAttribute("data-mode", mode); else r.removeAttribute("data-mode"); try{ localStorage.setItem("lp-mode", mode || "system"); }catch(e){} }
 const st = () => Object.assign({}, DEFAULT_SETTINGS, S.settings || {});
 const writeQ = {};
+let lastSaveFailToast = 0;
+/* Resolves to true when the write went through and false when it failed, so callers can tell. */
 function queueWrite(path, fn){
-  writeQ[path] = (writeQ[path] || Promise.resolve()).then(fn).catch(e => { console.warn("write failed", path, e); if (e && e.code === "quota_exceeded") toast("Storage is full. Delete old topics or cards."); });
+  writeQ[path] = (writeQ[path] || Promise.resolve()).then(fn).then(() => true, e => {
+    console.warn("write failed", path, e);
+    if (Date.now() - lastSaveFailToast > 5000){
+      lastSaveFailToast = Date.now();
+      toast(e && e.code === "quota_exceeded" ? "Storage is full. Delete old topics or cards." : "Couldn't save your change. Check your connection and try again.", 4500);
+    }
+    return false;
+  });
   return writeQ[path];
 }
 const saveTopic = (id, data) => { if(!S.db) return; Object.assign(S.topics[id] ||= {}, data); return queueWrite("topics/"+id, () => S.db.doc("topics/"+id).set(clean(S.topics[id]))); };
@@ -502,7 +533,7 @@ function statusIcon(st){
 function viewToday(){
   const dp = dayPlan(); const due = dueCards().length;
   const active = topicList(t => t.status === "active").sort((a,b) => (b.lastStudied||"").localeCompare(a.lastStudied||""));
-  const open = Object.values(S.openSessions);
+  const open = Object.values(S.openSessions).filter(s => S.topics[s.topicId]);
   const name = S.profile && S.profile.name ? ", " + esc(S.profile.name) : "";
   const pick = active.filter(t => fitOk(t, dp.kind));
   return '<div class="stack">' +
@@ -632,8 +663,13 @@ function bindTopic(){
   $("#tDel").onclick = async () => {
     if (!(await confirmBox("Delete \""+t.title+"\" and its cards? Your Obsidian copy stays.", "Delete"))) return;
     const id = S.arg; const cardIds = Object.keys(S.cards).filter(k => S.cards[k].topicId === id);
-    for (const k of cardIds){ await queueWrite("cards/"+k, () => S.db.doc("cards/"+k).delete()); }
-    await queueWrite("topics/"+id, () => S.db.doc("topics/"+id).delete());
+    const sessIds = Object.keys(S.openSessions).filter(k => S.openSessions[k].topicId === id);
+    let failed = false;
+    for (const k of cardIds){ if (await queueWrite("cards/"+k, () => S.db.doc("cards/"+k).delete()) === false) failed = true; }
+    for (const k of sessIds){ if (await queueWrite("sessions/"+k, () => S.db.doc("sessions/"+k).delete()) === false) failed = true; }
+    if (failed){ toast("Couldn't delete everything. The topic is kept; try again.", 4500); return; }
+    if (S.live && S.live.topicId === id) S.live = null;
+    if (await queueWrite("topics/"+id, () => S.db.doc("topics/"+id).delete()) === false) return;
     go("topics");
   };
 }
@@ -764,6 +800,7 @@ async function startSession(topicId, kind){
 }
 function resumeSession(id){
   const s = S.openSessions[id]; if (!s) return;
+  if (!S.topics[s.topicId]){ toast("That topic was deleted."); return; }
   S.live = JSON.parse(JSON.stringify(s)); S.liveFb = {};
   if (minutesLeft(S.live) <= 0) S.live.budgetMin = Math.round((Date.now() - Date.parse(S.live.startedAt))/60000) + 10;
   go("study");
@@ -808,7 +845,7 @@ async function finishSession(silent){
   if (!learnerTurns || !S.sample){
     sess.status = "closed"; sess.endedAt = nowIso(); await saveSession(sess); S.live = null; if (!silent) go("topic-" + sess.topicId); else render(true); return;
   }
-  const close = dialog('<h2>Saving to your note</h2><p class="muted"><span class="spin"></span> Updating the summary note and making review cards from this session…</p>');
+  const close = dialog('<h2>Saving to your note</h2><p class="muted"><span class="spin"></span> Updating the summary note and making review cards from this session…</p>', null, {persistent:true});
   const existingFronts = Object.values(S.cards).filter(c => c.topicId === sess.topicId).map(c => c.front).slice(-60);
   const transcript = sess.turns.map(x => x.r === "t" ? "TUTOR: " + x.text + (x.ctl && x.ctl.ask && x.ctl.ask.type !== "none" ? "\n[check: " + x.ctl.ask.prompt + " | answer: " + (x.ctl.ask.options ? x.ctl.ask.options[x.ctl.ask.correct] : x.ctl.ask.explain) + "]" : "") : "LEARNER: " + x.text).join("\n\n").slice(-60000);
   const hasVocab = Object.values(S.cards).some(c => c.topicId === sess.topicId && c.kind === "vocab");
@@ -872,7 +909,7 @@ ${transcript}`;
     dialog('<h2>Couldn\'t update the note</h2><p>'+esc(sampleErr(e))+'</p><p class="small muted">Your session is still saved. You can try again, or close it without updating the note.</p><div class="bar"><span class="sp"></span><button class="btn" id="fClose">Close without saving note</button><button class="btn primary" id="fRetry">Try again</button></div>', (el, c2) => {
       $("#fRetry", el).onclick = () => { c2(); finishSession(silent); };
       $("#fClose", el).onclick = async () => { c2(); sess.status = "closed"; sess.endedAt = nowIso(); await saveSession(sess); S.live = null; go("topic-" + sess.topicId); };
-    });
+    }, {persistent:true});
   }
 }
 
@@ -1343,7 +1380,7 @@ function viewSettings(){
    '<div class="card stack"><h2>Sessions</h2><label class="f" for="sWd">Weekday session length (minutes)<input type="text" inputmode="numeric" id="sWd" value="'+esc(s.weekdayMin)+'"></label><label class="f" for="sWe">Saturday session length (minutes)<input type="text" inputmode="numeric" id="sWe" value="'+esc(s.weekendMin)+'"></label>' +
     '<div class="f">Teaching depth<div class="seg" id="depthSeg" role="group" aria-label="Teaching depth"><button data-d="quick">Fast</button><button data-d="default">Balanced</button><button data-d="complex">Deep</button></div><span class="small muted" style="font-weight:400">Fast replies instantly and uses the least of your Claude usage. Deep thinks longer and suits hard robotics or math topics.</span></div></div>' +
    '<div class="bar"><span class="sp"></span><button class="btn primary" id="sSave">Save settings</button></div>' +
-   '<div class="card stack"><h2>Backup</h2><p class="small muted" style="margin:0">Everything already syncs between your devices. A backup file is for safekeeping.</p><div class="bar">'+(S.dl?'<button class="btn" id="bkDl">Download backup (.json)</button>':'<button class="btn" id="bkCp">Copy backup</button>')+'<label class="btn" for="bkIn">Restore from backup</label><input type="file" id="bkIn" accept=".json,application/json" style="display:none"></div></div></div>';
+   '<div class="card stack"><h2>Backup</h2><p class="small muted" style="margin:0">Everything already syncs between your devices. A backup file is for safekeeping.</p><div class="bar">'+(S.dl?'<button class="btn" id="bkDl">Download backup (.json)</button>':'<button class="btn" id="bkCp">Copy backup</button>')+'<button class="btn" id="bkBtn" type="button">Restore from backup</button><input type="file" id="bkIn" accept=".json,application/json" style="display:none"></div></div></div>';
 }
 function bindSettings(){
   const s = st(); let depth = s.depth;
@@ -1352,19 +1389,23 @@ function bindSettings(){
   const paint = () => $$("#depthSeg button").forEach(b => b.classList.toggle("on", b.dataset.d === depth)); paint();
   $$("#depthSeg button").forEach(b => b.onclick = () => { depth = b.dataset.d; paint(); });
   $("#sSave").onclick = () => { saveSettings({vault:$("#sVault").value.trim()||"Obsidian Vault", folder:$("#sFolder").value.trim().replace(/^\/+|\/+$/g,"")||"Learning", weekdayMin:Math.max(5, +$("#sWd").value||15), weekendMin:Math.max(5, +$("#sWe").value||40), depth}); toast("Saved"); };
-  const dump = () => JSON.stringify({exportedAt:nowIso(), profile:S.profile, settings:S.settings, topics:S.topics, cards:S.cards}, null, 1);
+  const dump = () => JSON.stringify({exportedAt:nowIso(), profile:S.profile, settings:S.settings, topics:S.topics, cards:S.cards, stats:S.stats}, null, 1);
   const bd = $("#bkDl"); if (bd) bd.onclick = async () => { try{ await S.dl.save({filename:"lernpfad-backup-" + ymd(Date.now()) + ".json", data: dump()}); }catch(e){ if (e && e.code !== "declined") toast("Couldn't save the file here."); } };
   const bc = $("#bkCp"); if (bc) bc.onclick = () => copyText(dump());
+  $("#bkBtn").onclick = () => $("#bkIn").click();
   $("#bkIn").onchange = async e => {
-    const f = e.target.files[0]; if (!f) return;
-    try{
-      const d = JSON.parse(await f.text());
-      if (!(await confirmBox("Restore this backup? Topics and cards with the same id are overwritten; others stay.", "Restore"))) return;
-      if (d.profile) await saveProfile(d.profile);
-      for (const [id,t] of Object.entries(d.topics||{})) await saveTopic(id, t);
-      for (const [id,c] of Object.entries(d.cards||{})) await saveCard(id, c);
-      toast("Restored");
-    }catch(err){ toast("That file isn't a Lernpfad backup."); }
+    const inp = e.target, f = inp.files[0]; if (!f) return;
+    let d = null;
+    try{ d = JSON.parse(await f.text()); }catch(err){ d = null; }
+    inp.value = "";
+    if (!d || typeof d !== "object" || !(d.topics || d.cards || d.profile)){ toast("That file isn't a Lernpfad backup."); return; }
+    if (!(await confirmBox("Restore this backup? Topics and cards with the same id are overwritten; others stay.", "Restore"))) return;
+    let ok = 0, bad = 0; const tally = r => { if (r === false) bad++; else ok++; };
+    if (d.profile) tally(await saveProfile(d.profile));
+    for (const [id,t] of Object.entries(d.topics||{})) tally(await saveTopic(id, t));
+    for (const [id,c] of Object.entries(d.cards||{})) tally(await saveCard(id, c));
+    for (const [day,x] of Object.entries(d.stats||{})){ S.stats[day] = x; tally(await queueWrite("stats/"+day, () => S.db.doc("stats/"+day).set(clean(x)))); }
+    toast(bad ? "Restored " + ok + " of " + (ok + bad) + " items. Some couldn't be saved; try again." : "Restored", bad ? 5000 : 2600);
   };
 }
 
@@ -1409,7 +1450,7 @@ function openPalette(){
 document.addEventListener("keydown", e => {
   const typing = /INPUT|TEXTAREA|SELECT/.test((document.activeElement||{}).tagName || "");
   if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k"){ e.preventDefault(); openPalette(); return; }
-  if (e.key === "Escape" && $("#overlay .modal")){ $("#overlay").innerHTML = ""; return; }
+  if (e.key === "Escape" && $("#overlay .modal")){ const m = $("#overlay .modal"); if (m._dismiss) m._dismiss(); return; }
   if (typing || $("#overlay .modal") || e.metaKey || e.ctrlKey || e.altKey) return;
   if (S.route === "study"){
     const opts = $$("#dock .opt:not([disabled])");
