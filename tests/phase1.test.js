@@ -68,6 +68,43 @@ async function runTests(){
     ok("card revlog", revlogs().length === n + 1 && revlogs().some(x => x.itemType === "card" && x.itemId === "c1" && x.grade === 3));
   });
 
+  /* ---- Task 3: today's plan (pure; reads S, so swap in synthetic state and restore it) ---- */
+  await run("buildPlan", async () => {
+    const keep = {t: S.topics, c: S.cards, k: S.kcs}, now = Date.now(), past = new Date(now - 3600000).toISOString(), future = new Date(now + 9 * 86400000).toISOString();
+    const steps = (n, status) => Array.from({length: n}, (_, i) => ({id: "p" + (i + 1), title: "Step " + (i + 1), status: status || "done"}));
+    const kcsFor = (tid, n, due) => Object.fromEntries(Array.from({length: n}, (_, i) => [kcId(tid, "p" + (i + 1)), {topicId: tid, stepId: "p" + (i + 1), title: "Step " + (i + 1), s: 3, d: 5, last: past, due, prereqs: i ? [kcId(tid, "p" + i)] : []}]));
+    try{
+      // 15 min, 40 due cards, 10 due skills: cards take 10 min, 3 skills fit in the rest, no room to learn
+      S.topics = {A: {title: "A", status: "active", plan: steps(10)}};
+      S.cards = Object.fromEntries(Array.from({length: 40}, (_, i) => ["c" + i, {topicId: "A", front: "f", back: "b"}]));
+      S.kcs = kcsFor("A", 10, past);
+      let p = buildPlan(now, 15);
+      ok("15 min: 20 cards, 3 skills, nothing new", p.cards === 20 && p.practice.length === 1 && p.practice[0].stepIds.length === 3 && p.learn.length === 0, JSON.stringify(p));
+      p = buildPlan(now, 10);
+      ok("10 min (Sunday): 20 cards fill it", p.cards === 20 && p.practice.length === 0 && p.learn.length === 0, JSON.stringify(p));
+      // 40 min, nothing due, three topics with a next step: cap of 2 new steps per day
+      S.cards = {}; S.kcs = {};
+      S.topics = {A: {title: "A", status: "active", plan: steps(2, "todo")}, B: {title: "B", status: "active", plan: steps(2, "todo")}, C: {title: "C", status: "active", plan: steps(2, "todo")}};
+      p = buildPlan(now, 40);
+      ok("at most 2 new steps", p.learn.length === 2 && p.cards === 0 && p.practice.length === 0, JSON.stringify(p));
+      // prerequisite due today blocks the next step; the due skill goes to practice instead
+      S.topics = {B: {title: "B", status: "active", plan: [{id: "p1", title: "One", status: "done"}, {id: "p2", title: "Two", status: "todo"}]}};
+      S.kcs = kcsFor("B", 2, past); S.kcs["B-p2"].s = undefined;
+      p = buildPlan(now, 40);
+      ok("prerequisite due today blocks the new step", p.learn.length === 0 && p.practice.length === 1 && p.practice[0].stepIds[0] === "p1", JSON.stringify(p));
+      S.kcs = kcsFor("B", 2, future); S.kcs["B-p2"].s = undefined;
+      p = buildPlan(now, 40);
+      ok("prerequisite due later allows it", p.learn.length === 1 && p.learn[0].stepId === "p2" && p.practice.length === 0, JSON.stringify(p));
+      // no plan yet, paused topics and removed steps
+      S.kcs = {}; S.topics = {N: {title: "New", status: "active"}, P: {title: "P", status: "paused", plan: steps(2, "todo")}};
+      p = buildPlan(now, 40);
+      ok("no plan -> Start item; paused topic ignored", p.learn.length === 1 && p.learn[0].topicId === "N" && p.learn[0].stepId === null, JSON.stringify(p));
+      S.topics = {}; S.cards = {}; S.kcs = {};
+      p = buildPlan(now, 40);
+      ok("empty state is an empty plan", p.cards === 0 && !p.practice.length && !p.learn.length);
+    } finally { S.topics = keep.t; S.cards = keep.c; S.kcs = keep.k; }
+  });
+
   const fail = out.filter(o => !o.pass);
   return {passed: out.length - fail.length, failed: fail.length, failures: fail, all: out.map(o => (o.pass ? "ok   " : "FAIL ") + o.name)};
 }

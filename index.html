@@ -580,12 +580,37 @@ function statusIcon(st){
   if (st === "doing") return '<svg class="st" viewBox="0 0 14 14"><circle cx="7" cy="7" r="6" fill="none" stroke="var(--accent)" stroke-width="1.5"/><path d="M7 3a4 4 0 0 1 0 8z" fill="var(--accent)"/></svg>';
   return '<svg class="st" viewBox="0 0 14 14"><circle cx="7" cy="7" r="6" fill="none" stroke="var(--faint)" stroke-width="1.5" stroke-dasharray="2.2 2"/></svg>';
 }
+/* Today's plan from the minute budget: due cards, then due skills (per topic), then new steps if time remains.
+   shortcut: practice is grouped per topic, not mixed across topics; costs (0.5 / 1.5 / 5 min) and caps (20 / 5 / 2) are guesses, tune with review-log data. */
+function buildPlan(now, budgetMin){
+  let left = budgetMin;
+  const cards = Math.min(dueCards().length, 20, Math.floor(left / 0.5)); left -= cards * 0.5;
+  const due = kcsDue(now).sort((a, b) => a[1].due < b[1].due ? -1 : 1), take = Math.min(due.length, 5, Math.floor(left / 1.5));
+  const byTopic = {}; due.slice(0, take).forEach(([, k]) => (byTopic[k.topicId] ||= []).push(k.stepId)); left -= take * 1.5;
+  const practice = Object.entries(byTopic).map(([topicId, stepIds]) => ({topicId, stepIds}));
+  const learn = [];
+  const topics = topicList(t => t.status === "active" && fitOk(t, dayPlan().kind)).sort((a, b) => (b.lastStudied || "").localeCompare(a.lastStudied || ""));
+  for (const t of topics){
+    if (learn.length >= 2 || left < 5) break;
+    if (!(t.plan || []).length){ learn.push({topicId: t.id, stepId: null, title: "Start: " + t.title}); left -= 5; continue; }
+    const step = t.plan.find(x => x.status !== "done"); if (!step) continue;
+    const kc = S.kcs[kcId(t.id, step.id)];
+    if (kc && (kc.prereqs || []).map(id => S.kcs[id]).some(q => q && q.s && Date.parse(q.due) <= now)) continue; // prerequisite is due today: review it first
+    learn.push({topicId: t.id, stepId: step.id, title: step.title}); left -= 5;
+  }
+  return {cards, practice, learn};
+}
 function viewToday(){
   const dp = dayPlan(); const due = dueCards().length;
   const active = topicList(t => t.status === "active").sort((a,b) => (b.lastStudied||"").localeCompare(a.lastStudied||""));
   const open = Object.values(S.openSessions).filter(s => S.topics[s.topicId]);
   const name = S.profile && S.profile.name ? ", " + esc(S.profile.name) : "";
-  const pick = active.filter(t => fitOk(t, dp.kind));
+  const plan = buildPlan(Date.now(), dp.minutes); S.plan = plan;
+  const tt = id => esc((S.topics[id] || {}).title || ""), pl = n => n + (n === 1 ? " skill" : " skills");
+  const items = [];
+  if (plan.cards) items.push('<div class="card bar"><div><div class="eyebrow">Review · about '+Math.ceil(plan.cards*0.5)+' min</div><h3>'+plan.cards+(plan.cards === 1 ? ' card due' : ' cards due')+'</h3></div><span class="sp"></span><a class="btn blaze sm" href="#review">Review</a></div>');
+  plan.practice.forEach(x => items.push('<div class="card bar"><div><div class="eyebrow">Practice · about '+Math.ceil(x.stepIds.length*1.5)+' min</div><h3>'+tt(x.topicId)+'</h3><p class="small muted" style="margin:0">'+pl(x.stepIds.length)+' due</p></div><span class="sp"></span><button class="btn primary sm" data-pkc="'+esc(x.topicId)+'">Practice</button></div>'));
+  plan.learn.forEach(x => items.push('<div class="card bar"><div><div class="eyebrow">Learn · new</div><h3>'+esc(x.title)+'</h3><p class="small muted" style="margin:0">'+tt(x.topicId)+'</p></div><span class="sp"></span><button class="btn primary sm" data-learn="'+esc(x.topicId)+'">Start</button></div>'));
   return '<div class="stack">' +
   '<div><div class="eyebrow">'+esc(dp.label)+'</div><h1>Guten Tag'+name+'</h1><p class="muted" style="margin:.3em 0 0">'+esc(dp.tip)+'</p></div>' +
   '<div class="tiles">' +
@@ -594,9 +619,9 @@ function viewToday(){
     '<div class="tile"><div class="eyebrow">Suggested length</div><div class="n">'+dp.minutes+'<span class="small"> min</span></div><span class="small muted">from your routine</span></div>' +
   '</div>' +
   (open.length ? '<section class="stack"><h2>Pick up where you stopped</h2><div class="grid">' + open.map(s => { const t = S.topics[s.topicId]||{}; return '<div class="card"><div class="eyebrow">'+(s.kind==="practice"?"Practice":"Lesson")+' · started '+fmtDate(s.startedAt)+'</div><h3>'+esc(t.title||"Topic")+'</h3><div class="bar" style="margin-top:10px"><button class="btn primary sm" data-resume="'+esc(s.id)+'">Resume</button><button class="btn ghost sm" data-endsess="'+esc(s.id)+'">Save & close</button></div></div>'; }).join("") + '</div></section>' : "") +
-  '<section class="stack"><div class="bar"><h2>Continue</h2><span class="sp"></span><button class="btn sm" id="newTopic">+ New topic</button></div>' +
-  (active.length ? '<div class="grid">' + (pick.length?pick:active).map(t => topicCard(t, dp)).join("") + '</div>' + (pick.length && pick.length < active.length ? '<p class="small muted">Other trails are better for '+(dp.kind==="weekday"?"the weekend":"weekdays")+'. <a href="#topics">See all</a></p>' : "")
-    : '<div class="card stack" style="gap:8px"><p style="margin:0">No trails yet. Add the first thing you want to learn.</p><div><button class="btn primary" id="newTopic2">+ New topic</button></div></div>') + '</section>' +
+  '<section class="stack"><div class="bar"><h2>Today\'s plan</h2><span class="sp"></span><button class="btn sm" id="newTopic">+ New topic</button></div>' +
+  (items.length ? '<div class="grid">' + items.join("") + '</div>'
+    : '<div class="card stack" style="gap:8px"><p style="margin:0">Nothing due today. Add something new to learn, or open a topic.</p><div class="bar"><button class="btn primary" id="newTopic2">+ New topic</button><a class="btn" href="#topics">All topics</a></div></div>') + '</section>' +
 '</div>';
 }
 const fitChip = f => f === "weekday" ? '<span class="chip">Weekday-sized</span>' : f === "weekend" ? '<span class="chip">Weekend depth</span>' : "";
@@ -610,6 +635,7 @@ function topicCard(t, dp){
 function bindCommon(){
   $$("[data-learn]").forEach(b => b.onclick = () => startSession(b.dataset.learn, "teach"));
   $$("[data-practice]").forEach(b => b.onclick = () => startSession(b.dataset.practice, "practice"));
+  $$("[data-pkc]").forEach(b => b.onclick = () => { const x = ((S.plan || {}).practice || []).find(q => q.topicId === b.dataset.pkc); startSession(b.dataset.pkc, "practice", x && x.stepIds); });
   $$("[data-resume]").forEach(b => b.onclick = () => resumeSession(b.dataset.resume));
   $$("[data-endsess]").forEach(b => b.onclick = async () => { const s = S.openSessions[b.dataset.endsess]; if (s){ S.live = JSON.parse(JSON.stringify(s)); await finishSession(true); } });
   $$("[data-start]").forEach(b => b.onclick = () => { saveTopic(b.dataset.start, {status:"active", updatedAt:nowIso()}); startSession(b.dataset.start, "teach"); });
@@ -839,13 +865,14 @@ function tierFor(sess){
   return "default";
 }
 
-async function startSession(topicId, kind){
+async function startSession(topicId, kind, stepIds){
   if (!S.sample){ toast("Claude isn't available on this page right now."); return; }
   const existing = Object.values(S.openSessions).find(s => s.topicId === topicId && s.kind === kind);
-  if (existing) return resumeSession(existing.id);
+  if (existing){ if (stepIds){ existing.kcIds = stepIds; saveSession(existing); } return resumeSession(existing.id); }
   const t = S.topics[topicId]; if (!t) return;
   if (t.status !== "active") saveTopic(topicId, {status:"active"});
   const sess = {id: uid("s"), topicId, kind, startedAt: nowIso(), updatedAt: nowIso(), budgetMin: dayPlan().minutes, status:"open", turns: []};
+  if (stepIds) sess.kcIds = stepIds;
   S.live = sess; S.liveFb = {}; saveSession(sess);
   go("study"); await teacherTurn(null);
 }
