@@ -613,15 +613,15 @@ function viewToday(){
   plan.learn.forEach(x => items.push('<div class="card bar"><div><div class="eyebrow">Learn · new</div><h3>'+esc(x.title)+'</h3><p class="small muted" style="margin:0">'+tt(x.topicId)+'</p></div><span class="sp"></span><button class="btn primary sm" data-learn="'+esc(x.topicId)+'">Start</button></div>'));
   return '<div class="stack">' +
   '<div><div class="eyebrow">'+esc(dp.label)+'</div><h1>Guten Tag'+name+'</h1><p class="muted" style="margin:.3em 0 0">'+esc(dp.tip)+'</p></div>' +
+  (open.length ? '<section class="stack"><h2>Pick up where you stopped</h2><div class="grid">' + open.map(s => { const t = S.topics[s.topicId]||{}; return '<div class="card"><div class="eyebrow">'+(s.kind==="practice"?"Practice":"Lesson")+' · started '+fmtDate(s.startedAt)+'</div><h3>'+esc(t.title||"Topic")+'</h3><div class="bar" style="margin-top:10px"><button class="btn primary sm" data-resume="'+esc(s.id)+'">Resume</button><button class="btn ghost sm" data-endsess="'+esc(s.id)+'">Save & close</button></div></div>'; }).join("") + '</div></section>' : "") +
+  '<section class="stack"><div class="bar"><h2>Today\'s plan</h2><span class="sp"></span><button class="btn sm" id="newTopic">+ New topic</button></div>' +
+  (items.length ? '<div class="grid">' + items.join("") + '</div>'
+    : '<div class="card stack" style="gap:8px"><p style="margin:0">Nothing due today. Add something new to learn, or open a topic.</p><div class="bar"><button class="btn primary" id="newTopic2">+ New topic</button><a class="btn" href="#topics">All topics</a></div></div>') + '</section>' +
   '<div class="tiles">' +
     '<div class="tile"><div class="eyebrow">Cards due</div><div class="n">'+due+'</div>'+(due?'<a class="btn blaze sm" href="#review">Review now</a>':'<span class="small muted">Nothing due</span>')+'</div>' +
     '<div class="tile"><div class="eyebrow">Active trails</div><div class="n">'+active.length+'</div><a class="btn sm" href="#topics">All topics</a></div>' +
     '<div class="tile"><div class="eyebrow">Suggested length</div><div class="n">'+dp.minutes+'<span class="small"> min</span></div><span class="small muted">from your routine</span></div>' +
   '</div>' +
-  (open.length ? '<section class="stack"><h2>Pick up where you stopped</h2><div class="grid">' + open.map(s => { const t = S.topics[s.topicId]||{}; return '<div class="card"><div class="eyebrow">'+(s.kind==="practice"?"Practice":"Lesson")+' · started '+fmtDate(s.startedAt)+'</div><h3>'+esc(t.title||"Topic")+'</h3><div class="bar" style="margin-top:10px"><button class="btn primary sm" data-resume="'+esc(s.id)+'">Resume</button><button class="btn ghost sm" data-endsess="'+esc(s.id)+'">Save & close</button></div></div>'; }).join("") + '</div></section>' : "") +
-  '<section class="stack"><div class="bar"><h2>Today\'s plan</h2><span class="sp"></span><button class="btn sm" id="newTopic">+ New topic</button></div>' +
-  (items.length ? '<div class="grid">' + items.join("") + '</div>'
-    : '<div class="card stack" style="gap:8px"><p style="margin:0">Nothing due today. Add something new to learn, or open a topic.</p><div class="bar"><button class="btn primary" id="newTopic2">+ New topic</button><a class="btn" href="#topics">All topics</a></div></div>') + '</section>' +
 '</div>';
 }
 const fitChip = f => f === "weekday" ? '<span class="chip">Weekday-sized</span>' : f === "weekend" ? '<span class="chip">Weekend depth</span>' : "";
