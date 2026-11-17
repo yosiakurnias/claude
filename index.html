@@ -88,6 +88,7 @@ main.enter > *{animation:viewin .42s var(--spring) both}
 .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:14px}
 .card{background:var(--card);border:0;border-radius:14px;padding:16px 18px;box-shadow:var(--cellshadow)}
 .card h3{margin-bottom:2px}
+.topic-grid{display:grid;grid-template-columns:minmax(0,2fr) minmax(0,1fr);gap:14px;align-items:start}
 .tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:14px}
 .tile{background:var(--card);border-radius:14px;padding:14px 16px;display:flex;flex-direction:column;gap:6px;box-shadow:var(--cellshadow)}
 .tile .btn{align-self:flex-start}
@@ -194,6 +195,7 @@ main.studying{padding-top:0;padding-bottom:0;min-width:0;overflow-x:clip}
 .opt:hover{background:var(--fill2)}
 .opt:active{transform:scale(.98)}
 .opt.right{background:var(--good-soft);box-shadow:inset 0 0 0 1.5px var(--good)}
+.opt.picked{background:var(--accent-soft);box-shadow:inset 0 0 0 1.5px var(--accent)}
 .opt.wrong{background:var(--bad-soft);box-shadow:inset 0 0 0 1.5px var(--bad)}
 .row2{display:flex;gap:8px;align-items:flex-end}
 .row2 textarea{min-height:52px}
@@ -270,6 +272,7 @@ nav.bottom{display:none}
   .confg .seg button{flex:1;padding:0 6px}
   .dock .bar.small .btn.ghost{padding:0 8px}
   .rate{grid-template-columns:repeat(2,1fr)}
+  .topic-grid{grid-template-columns:1fr}
   .toast{bottom:92px}
   /* alerts become bottom sheets on phones */
   .modal{align-items:flex-end;padding:0}
@@ -277,9 +280,10 @@ nav.bottom{display:none}
   .modal .card::before{content:"";position:absolute;top:7px;left:50%;transform:translateX(-50%);width:36px;height:5px;border-radius:3px;background:var(--fill2)}
   .palette{border-radius:16px 16px 0 0!important}
 }
-@media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
+@media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important} .spin{animation:spinpulse 1.4s ease-in-out infinite!important}}
 .spin{display:inline-block;width:14px;height:14px;border:2px solid var(--fill2);border-top-color:var(--accent);border-radius:50%;animation:sp .8s linear infinite;vertical-align:-2px}
 @keyframes sp{to{transform:rotate(360deg)}}
+@keyframes spinpulse{50%{opacity:.35}}
 @keyframes sheetfade{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
 @keyframes viewin{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
 @keyframes msgin{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
@@ -397,7 +401,7 @@ const sampleErr = e => ({
 const S = {
   db:null, sample:null, dl:null, dict:null, tts:null, ready:false, noClaude:false, loadTimedOut:false,
   profile:null, settings:{}, topics:{}, cards:{}, openSessions:{}, materials:{}, stats:{},
-  route:"today", arg:null, live:null /* active study session */, busy:false, ctl:null, review:null, importDraft:null
+  route:"today", arg:null, live:null /* active study session */, busy:false, ctl:null, review:null
 };
 const DEFAULT_SETTINGS = { vault:"Obsidian Vault", folder:"Learning", depth:"default", weekdayMin:15, weekendMin:40, mode:"system" };
 function applyMode(mode){ const r = document.documentElement; if (mode === "light" || mode === "dark") r.setAttribute("data-mode", mode); else r.removeAttribute("data-mode"); try{ localStorage.setItem("lp-mode", mode || "system"); }catch(e){} }
@@ -624,7 +628,7 @@ function viewTopic(){
    '<div><a href="#topics" class="small">← Topics</a><div class="bar" style="margin-top:6px"><h1>'+esc(t.title)+'</h1><span class="sp"></span>'+fitChip(t.fit)+'<span class="chip">'+esc(t.status||"active")+'</span></div>' +
    (t.level?'<p class="muted" style="margin:.3em 0 0">Where you are: '+esc(t.level)+'</p>':'') + '</div>' +
    '<div class="bar"><button class="btn primary" data-learn="'+esc(t.id)+'">'+(t.lastStudied?"Continue lesson":"Start first lesson")+' · '+dp.minutes+' min</button><button class="btn" data-practice="'+esc(t.id)+'">Practice</button>'+(total?'<a class="btn" href="#review" id="revTopic">Review cards ('+due+' due / '+total+')</a>':'')+'</div>' +
-   '<div class="grid" style="grid-template-columns:minmax(0,2fr) minmax(0,1fr);align-items:start" id="topicGrid">' +
+   '<div class="topic-grid" id="topicGrid">' +
      '<article class="card"><div class="bar" style="margin-bottom:6px"><span class="eyebrow">Summary note</span><span class="sp"></span><button class="btn sm" id="cpNote">Copy</button>'+(S.dl?'<button class="btn sm" id="dlNote">Download .md</button>':'')+'<a class="btn sm" href="'+esc(obsidianUri(t))+'">Open in Obsidian</a></div>' +
        '<div class="prose">'+ (t.summaryMd ? md(t.summaryMd) : '<p class="muted">Your note fills in after your first lesson: what you learned, key terms, mistakes you fixed, and what\'s next.</p>' + (t.why?'<h3>Why</h3><p>'+esc(t.why)+'</p>':'')) +'</div>' +
        '<p class="small muted" style="margin-top:12px">Saved here. The daily Claude sync copies it to <code>'+esc(st().folder)+'/'+esc(noteFileName(t))+'.md</code> in your vault, or use the buttons above.</p></article>' +
@@ -651,7 +655,6 @@ function materialsCard(t){
 function bindTopic(){
   bindCommon();
   const t = S.topics[S.arg]; if (!t) return;
-  if (window.matchMedia("(max-width:760px)").matches) { const g = $("#topicGrid"); if (g) g.style.gridTemplateColumns = "1fr"; }
   $("#tFit").value = t.fit || "any"; $("#tStatus").value = ["active","paused","done"].includes(t.status) ? t.status : "active";
   $("#cpNote").onclick = () => copyText(noteMarkdown(t));
   const dn = $("#dlNote"); if (dn) dn.onclick = () => downloadNote(t);
@@ -1101,7 +1104,7 @@ function renderDock(){
   if (ask.type === "mc"){
     $$(".opt", dock).forEach(b => b.onclick = () => {
       const i = +b.dataset.i; const pref = !(Number(ask.correct) >= 0); const right = i === Number(ask.correct);
-      if (pref){ $$(".opt", dock).forEach(x => { x.disabled = true; }); b.style.borderColor = "var(--ink)"; teacherTurn("My choice: \"" + ask.options[i] + "\"." + confTxt()); return; }
+      if (pref){ $$(".opt", dock).forEach(x => { x.disabled = true; }); b.classList.add("picked"); teacherTurn("My choice: \"" + ask.options[i] + "\"." + confTxt()); return; }
       $$(".opt", dock).forEach(x => { x.disabled = true; if (+x.dataset.i === Number(ask.correct)) x.classList.add("right"); });
       if (!right) b.classList.add("wrong");
       $("#mcAfter", dock).innerHTML = '<div class="fb '+(right?"good":"bad")+'"><b>'+(right?"Right.":"Not this one.")+'</b> '+esc(ask.explain||"")+'</div><div class="row2" style="margin-top:8px"><input type="text" id="why" placeholder="Optional: why you picked it, or what\'s unclear" aria-label="Your reasoning"><button class="btn primary" id="mcNext">Continue <span class="kbd hint">↵</span></button></div>';
