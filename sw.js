@@ -1,4 +1,6 @@
-// Keeps the app shell available offline; recording itself needs internet.
+// Keeps the app shell (this page, icons, manifest) available offline. The speech library comes from
+// cdn.jsdelivr.net, which this worker does not cache, so recording offline is not guaranteed;
+// the first recording on a device needs internet to download the library and the model.
 const CACHE = "lpvoice-v3";
 const SHELL = ["./", "index.html", "manifest.webmanifest", "icon.svg", "icon-192.png", "icon-512.png"];
 self.addEventListener("install", e => { e.waitUntil(caches.open(CACHE).then(c => c.addAll(SHELL))); self.skipWaiting(); });
