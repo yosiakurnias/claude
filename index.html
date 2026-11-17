@@ -343,6 +343,7 @@ const I = {
   spk:'<svg class="i" viewBox="0 0 24 24"><path d="M4 9v6h4l5 4V5L8 9z"/><path d="M16 9a4 4 0 0 1 0 6"/></svg>'
 };
 function toast(msg, ms=2600){
+  $$(".toast").forEach(x => x.remove());
   const d = document.createElement("div"); d.className="toast"; d.textContent=msg; d.setAttribute("aria-hidden","true");
   document.body.appendChild(d); setTimeout(()=>d.remove(), ms);
   const lv = $("#toastLive"); if (lv){ lv.textContent = ""; setTimeout(() => { lv.textContent = msg; }, 50); }
@@ -352,7 +353,7 @@ const FOCUSABLE = 'button:not([disabled]),input:not([disabled]),textarea:not([di
 function dialog(html, onMount, opts){
   opts = opts || {};
   const o = $("#overlay"), prev = document.activeElement;
-  o.innerHTML = '<div class="modal" role="dialog" aria-modal="true"><div class="card stack">'+html+'</div></div>';
+  o.innerHTML = '<div class="modal" role="dialog" aria-modal="true"><div class="card stack" tabindex="-1">'+html+'</div></div>';
   const modal = $(".modal", o), card = $(".card", modal);
   const head = $("h2,h3", card);
   if (head){ head.id = "dlgTitle"; modal.setAttribute("aria-labelledby", "dlgTitle"); } else modal.setAttribute("aria-label", opts.label || "Dialog");
@@ -394,7 +395,8 @@ const sampleErr = e => ({
   prompt_too_large:"That was too much text at once. Select fewer chats or shorter text.",
   invalid_json:"Claude's reply came back in the wrong format. Try again.",
   empty_completion:"Claude returned nothing. Try again.",
-  cancelled:"Stopped."
+  cancelled:"Stopped.",
+  save_failed:"Couldn't save to your account. Check your connection."
 }[e && e.code] || "Something went wrong talking to Claude. Try again.");
 
 /* ---------------- state ---------------- */
@@ -407,15 +409,13 @@ const DEFAULT_SETTINGS = { vault:"Obsidian Vault", folder:"Learning", depth:"def
 function applyMode(mode){ const r = document.documentElement; if (mode === "light" || mode === "dark") r.setAttribute("data-mode", mode); else r.removeAttribute("data-mode"); try{ localStorage.setItem("lp-mode", mode || "system"); }catch(e){} }
 const st = () => Object.assign({}, DEFAULT_SETTINGS, S.settings || {});
 const writeQ = {};
-let lastSaveFailToast = 0;
+const lastFailToast = {};
 /* Resolves to true when the write went through and false when it failed, so callers can tell. */
 function queueWrite(path, fn){
   writeQ[path] = (writeQ[path] || Promise.resolve()).then(fn).then(() => true, e => {
     console.warn("write failed", path, e);
-    if (Date.now() - lastSaveFailToast > 5000){
-      lastSaveFailToast = Date.now();
-      toast(e && e.code === "quota_exceeded" ? "Storage is full. Delete old topics or cards." : "Couldn't save your change. Check your connection and try again.", 4500);
-    }
+    const msg = e && e.code === "quota_exceeded" ? "Storage is full. Delete old topics or cards." : "Couldn't save your change. Check your connection and try again.";
+    if (Date.now() - (lastFailToast[msg] || 0) > 5000){ lastFailToast[msg] = Date.now(); toast(msg, 4500); }
     return false;
   });
   return writeQ[path];
@@ -659,12 +659,12 @@ function bindTopic(){
   $("#cpNote").onclick = () => copyText(noteMarkdown(t));
   const dn = $("#dlNote"); if (dn) dn.onclick = () => downloadNote(t);
   const rv = $("#revTopic"); if (rv) rv.onclick = () => { S.reviewTopic = S.arg; };
-  $("#tSave").onclick = () => {
+  $("#tSave").onclick = async () => {
     const up = {why:$("#tWhy").value.trim(), fit:$("#tFit").value, status:$("#tStatus").value, booksFolder:$("#tBooks").value.trim().replace(/^[\\/]+|[\\/]+$/g,""), updatedAt:nowIso()};
     const want = $("#tChat").checked;
     if (want && !t.chatContext) up.chatContext = {status:"pending", hint:""};
     if (!want && t.chatContext) up.chatContext = null;
-    saveTopic(S.arg, up); toast("Saved"); render(true);
+    const ok = await saveTopic(S.arg, up); toast(ok === false ? "Couldn't save your changes. Try again." : "Saved", ok === false ? 4500 : 2600); render(true);
   };
   $("#tDel").onclick = async () => {
     if (!(await confirmBox("Delete \""+t.title+"\" and its cards? Your Obsidian copy stays.", "Delete"))) return;
@@ -675,7 +675,7 @@ function bindTopic(){
     for (const k of sessIds){ if (await queueWrite("sessions/"+k, () => S.db.doc("sessions/"+k).delete()) === false) failed = true; }
     if (failed){ toast("Couldn't delete everything. The topic is kept; try again.", 4500); return; }
     if (S.live && S.live.topicId === id) S.live = null;
-    if (await queueWrite("topics/"+id, () => S.db.doc("topics/"+id).delete()) === false) return;
+    if (await queueWrite("topics/"+id, () => S.db.doc("topics/"+id).delete()) === false){ toast("Couldn't delete the topic. Try again.", 4500); return; }
     go("topics");
   };
 }
@@ -845,13 +845,19 @@ function applyControl(sess, ctl){
 }
 
 async function finishSession(silent){
+  if (S.finishing) return;
+  S.finishing = true;
+  try{ await finishSessionRun(silent); } finally { S.finishing = false; }
+}
+async function finishSessionRun(silent){
   const sess = S.live; if (!sess) return;
   const t = S.topics[sess.topicId] || {};
   const learnerTurns = sess.turns.filter(x => x.r === "l").length;
   if (!learnerTurns || !S.sample){
-    sess.status = "closed"; sess.endedAt = nowIso(); await saveSession(sess); S.live = null; if (!silent) go("topic-" + sess.topicId); else render(true); return;
+    sess.status = "closed"; sess.endedAt = nowIso();
+    if (await saveSession(sess) === false){ sess.status = "open"; delete sess.endedAt; return; }
+    S.live = null; if (!silent) go("topic-" + sess.topicId); else render(true); return;
   }
-  const close = dialog('<h2>Saving to your note</h2><p class="muted"><span class="spin"></span> Updating the summary note and making review cards from this session…</p>', null, {persistent:true});
   const existingFronts = Object.values(S.cards).filter(c => c.topicId === sess.topicId).map(c => c.front).slice(-60);
   const transcript = sess.turns.map(x => x.r === "t" ? "TUTOR: " + x.text + (x.ctl && x.ctl.ask && x.ctl.ask.type !== "none" ? "\n[check: " + x.ctl.ask.prompt + " | answer: " + (x.ctl.ask.options ? x.ctl.ask.options[x.ctl.ask.correct] : x.ctl.ask.explain) + "]" : "") : "LEARNER: " + x.text).join("\n\n").slice(-60000);
   const hasVocab = Object.values(S.cards).some(c => c.topicId === sess.topicId && c.kind === "vocab");
@@ -882,6 +888,7 @@ ${existingFronts.join(" | ") || "(none)"}
 
 === SESSION TRANSCRIPT (${sess.kind}) ===
 ${transcript}`;
+  const close = dialog('<h2>Saving to your note</h2><p class="muted"><span class="spin"></span> Updating the summary note and making review cards from this session…</p>', null, {persistent:true});
   try{
     const out = await S.sample.json(prompt, {modelTier:"default", cache:false});
     const up = {updatedAt: nowIso(), lastStudied: nowIso(), minutes: (t.minutes||0) + Math.max(1, Math.round((Date.now() - Date.parse(sess.startedAt))/60000)), sessions: (t.sessions||0) + 1};
@@ -894,8 +901,8 @@ ${transcript}`;
       const seen = new Set((t.resources||[]).map(r => (r.title||"").toLowerCase()));
       up.resources = (t.resources||[]).concat(out.resources.filter(r => r && r.title && !seen.has(String(r.title).toLowerCase())).map(r => ({title:String(r.title), url: /^https?:\/\//.test(r.url||"") ? r.url : "", why:String(r.why||"")}))).slice(-12);
     }
-    await saveTopic(sess.topicId, up);
-    let added = 0;
+    if (await saveTopic(sess.topicId, up) === false) throw Object.assign(new Error("save failed"), {code:"save_failed"});
+    let added = 0, cardsFailed = 0;
     if (out && Array.isArray(out.cards)){
       const okTypes = hasVocab ? ["choose","fix","apply","explain"] : ["choose","fix","apply","explain","word"];
       const memorized = /^\s*(\*\*)?\s*(translate|how (do|would) (you|i) say|say in german|say in english|übersetze)/i;
@@ -903,12 +910,13 @@ ${transcript}`;
         if (!c || !c.front || !c.back) continue;
         const type = String(c.type || "").toLowerCase();
         if (!okTypes.includes(type) || memorized.test(String(c.front))) continue; // concept cards only, never memorized phrases
-        const id = uid("c"); await saveCard(id, {topicId: sess.topicId, front:String(c.front), back:String(c.back), kind: type === "word" ? "word" : "concept", type, createdAt: nowIso(), due: nowIso(), reps:0, lapses:0}); added++;
+        const id = uid("c"); const okCard = await saveCard(id, {topicId: sess.topicId, front:String(c.front), back:String(c.back), kind: type === "word" ? "word" : "concept", type, createdAt: nowIso(), due: nowIso(), reps:0, lapses:0}); if (okCard === false) cardsFailed++; else added++;
       }
     }
-    sess.status = "closed"; sess.endedAt = nowIso(); await saveSession(sess);
+    sess.status = "closed"; sess.endedAt = nowIso();
+    const sessClosed = (await saveSession(sess)) !== false;
     close(); S.live = null;
-    toast("Note updated" + (added ? " · " + added + " new review card" + (added>1?"s":"") : ""), 3500);
+    toast(!sessClosed ? "Note updated, but the session couldn't be closed and may still show on Today." : cardsFailed ? "Note updated. " + cardsFailed + " review card" + (cardsFailed>1?"s":"") + " couldn't be saved." : "Note updated" + (added ? " · " + added + " new review card" + (added>1?"s":"") : ""), (!sessClosed || cardsFailed) ? 6000 : 3500);
     go("topic-" + sess.topicId);
   }catch(e){
     close();
@@ -1394,7 +1402,7 @@ function bindSettings(){
   $$("#modeSeg button").forEach(b => b.onclick = () => { applyMode(b.dataset.m); saveSettings({mode:b.dataset.m}); pm(); });
   const paint = () => $$("#depthSeg button").forEach(b => b.classList.toggle("on", b.dataset.d === depth)); paint();
   $$("#depthSeg button").forEach(b => b.onclick = () => { depth = b.dataset.d; paint(); });
-  $("#sSave").onclick = () => { saveSettings({vault:$("#sVault").value.trim()||"Obsidian Vault", folder:$("#sFolder").value.trim().replace(/^\/+|\/+$/g,"")||"Learning", weekdayMin:Math.max(5, +$("#sWd").value||15), weekendMin:Math.max(5, +$("#sWe").value||40), depth}); toast("Saved"); };
+  $("#sSave").onclick = async () => { const ok = await saveSettings({vault:$("#sVault").value.trim()||"Obsidian Vault", folder:$("#sFolder").value.trim().replace(/^\/+|\/+$/g,"")||"Learning", weekdayMin:Math.max(5, +$("#sWd").value||15), weekendMin:Math.max(5, +$("#sWe").value||40), depth}); toast(ok === false ? "Couldn't save your settings. Try again." : "Saved", ok === false ? 4500 : 2600); };
   const dump = () => JSON.stringify({exportedAt:nowIso(), profile:S.profile, settings:S.settings, topics:S.topics, cards:S.cards, stats:S.stats}, null, 1);
   const bd = $("#bkDl"); if (bd) bd.onclick = async () => { try{ await S.dl.save({filename:"lernpfad-backup-" + ymd(Date.now()) + ".json", data: dump()}); }catch(e){ if (e && e.code !== "declined") toast("Couldn't save the file here."); } };
   const bc = $("#bkCp"); if (bc) bc.onclick = () => copyText(dump());
@@ -1404,7 +1412,8 @@ function bindSettings(){
     let d = null;
     try{ d = JSON.parse(await f.text()); }catch(err){ d = null; }
     inp.value = "";
-    if (!d || typeof d !== "object" || !(d.topics || d.cards || d.profile)){ toast("That file isn't a Lernpfad backup."); return; }
+    const isObj = v => v && typeof v === "object" && !Array.isArray(v);
+    if (!isObj(d) || !(isObj(d.topics) || isObj(d.cards) || isObj(d.profile)) || [d.topics, d.cards, d.stats, d.profile].some(v => v != null && !isObj(v))){ toast("That file isn't a Lernpfad backup."); return; }
     if (!(await confirmBox("Restore this backup? Topics and cards with the same id are overwritten; others stay.", "Restore"))) return;
     let ok = 0, bad = 0; const tally = r => { if (r === false) bad++; else ok++; };
     if (d.profile) tally(await saveProfile(d.profile));
@@ -1430,7 +1439,7 @@ function paletteItems(){
   return items;
 }
 function openPalette(){
-  if ($("#overlay .palette")) return;
+  if ($("#overlay .modal")) return;
   const all = paletteItems(); let shown = all, idx = 0;
   const close = dialog('<div class="palette stack"><input type="text" id="palQ" placeholder="Search topics and actions…" aria-label="Search" autocomplete="off"><div class="list" id="palList" role="listbox"></div><div class="foot hint"><span><span class="kbd">↑</span> <span class="kbd">↓</span> move</span><span><span class="kbd">↵</span> open</span><span><span class="kbd">esc</span> close</span></div></div>', (el) => {
     el.classList.add("palette");
