@@ -402,7 +402,7 @@ const sampleErr = e => ({
 /* ---------------- state ---------------- */
 const S = {
   db:null, sample:null, dl:null, dict:null, tts:null, ready:false, noClaude:false, loadTimedOut:false,
-  profile:null, settings:{}, topics:{}, cards:{}, openSessions:{}, materials:{}, stats:{},
+  profile:null, settings:{}, topics:{}, cards:{}, kcs:{}, openSessions:{}, materials:{}, stats:{},
   route:"today", arg:null, live:null /* active study session */, busy:false, ctl:null, review:null
 };
 const DEFAULT_SETTINGS = { vault:"Obsidian Vault", folder:"Learning", depth:"default", weekdayMin:15, weekendMin:40, mode:"system" };
@@ -424,6 +424,25 @@ const saveTopic = (id, data) => { if(!S.db) return; Object.assign(S.topics[id] |
 const saveProfile = data => { if(!S.db) return; S.profile = Object.assign({}, S.profile||{}, data, {updatedAt:nowIso()}); return queueWrite("lp/profile", () => S.db.doc("lp/profile").set(clean(S.profile))); };
 const saveSettings = data => { if(!S.db) return; S.settings = Object.assign({}, st(), data); return queueWrite("lp/settings", () => S.db.doc("lp/settings").set(clean(S.settings))); };
 const saveCard = (id, c) => { if(!S.db) return; S.cards[id] = c; return queueWrite("cards/"+id, () => S.db.doc("cards/"+id).set(clean(c))); };
+const saveKc = (id, k) => { if(!S.db) return; S.kcs[id] = k; return queueWrite("kcs/"+id, () => S.db.doc("kcs/"+id).set(clean(k))); };
+/* A knowledge component (KC) is one plan step. Same FSRS fields as a card, so schedule() works on it unchanged. */
+const kcId = (topicId, stepId) => topicId + "-" + stepId;
+function syncKcs(topicId){
+  const t = S.topics[topicId]; if (!t || !Array.isArray(t.plan)) return Promise.resolve();
+  const now = new Date().toISOString(), jobs = [];
+  t.plan.forEach((p, i) => {
+    const id = kcId(topicId, p.id), have = S.kcs[id];
+    if (have){ if (have.title !== p.title) jobs.push(saveKc(id, Object.assign({}, have, {title: p.title}))); return; }
+    const kc = {topicId, stepId: p.id, title: p.title, kind:"concept", prereqs: i ? [kcId(topicId, t.plan[i-1].id)] : [], stage: p.status === "done" ? "solo" : p.status === "doing" ? "completion" : "example", createdAt: now, due: now, reps:0, lapses:0};
+    if (p.status === "done") Object.assign(kc, {s: W[2], d: initD(3), last: now, reps:1}); // learned: as if answered Good once, due today
+    jobs.push(saveKc(id, kc));
+  });
+  return Promise.all(jobs);
+}
+/* Learned KCs due now, for topics still active and steps still in the plan. */
+function kcsDue(now){
+  return Object.entries(S.kcs).filter(([id, k]) => { const t = S.topics[k.topicId]; return k.s && Date.parse(k.due) <= now && t && (t.status || "active") === "active" && (t.plan || []).some(p => p.id === k.stepId); });
+}
 const saveSession = sess => { if(!S.db) return; return queueWrite("sessions/"+sess.id, () => S.db.doc("sessions/"+sess.id).set(clean(sess))); };
 function clean(o){ return JSON.parse(JSON.stringify(o, (k,v) => v === undefined ? null : v)); }
 
@@ -452,11 +471,13 @@ async function init(){
   const timer = setTimeout(() => { S.loadTimedOut = true; render(); }, 10000);
   let got = 0; const mark = () => { if (++got >= 3){ clearTimeout(timer); S.loadTimedOut = false; S.ready = true; } render(); };
   const onErr = e => { console.warn(e); clearTimeout(timer); S.ready = true; render(); };
-  let pOnce=false, tOnce=false, cOnce=false;
+  let pOnce=false, tOnce=false, cOnce=false, kOnce=false;
+  function migrateKcs(){ if (tOnce && kOnce && !S.kcMigrated){ S.kcMigrated = true; Object.keys(S.topics).forEach(syncKcs); } }
   db.doc("lp/profile").onSnapshot(s => { S.profile = s.exists ? s.data() : null; if(!pOnce && !s.metadata.fromCache){pOnce=true; mark();} else render(); }, onErr);
   db.doc("lp/settings").onSnapshot(s => { S.settings = s.exists ? s.data() : {}; applyMode(st().mode); render(); }, onErr);
-  db.collection("topics").onSnapshot(q => { const t={}; q.docs.forEach(d => t[d.id] = Object.assign({}, d.data())); S.topics = t; if(!tOnce && !q.metadata.fromCache){tOnce=true; mark();} else render(); }, onErr);
+  db.collection("topics").onSnapshot(q => { const t={}; q.docs.forEach(d => t[d.id] = Object.assign({}, d.data())); S.topics = t; if(!tOnce && !q.metadata.fromCache){tOnce=true; mark(); migrateKcs();} else render(); }, onErr);
   db.collection("cards").onSnapshot(q => { const c={}; q.docs.forEach(d => c[d.id] = Object.assign({}, d.data())); S.cards = c; if(!cOnce && !q.metadata.fromCache){cOnce=true; mark();} else render(); }, onErr);
+  db.collection("kcs").onSnapshot(q => { const m = {}; q.docs.forEach(d => m[d.id] = Object.assign({}, d.data())); S.kcs = m; if (!kOnce && !q.metadata.fromCache){ kOnce = true; migrateKcs(); } render(); }, e => console.warn(e));
   db.collection("stats").onSnapshot(q => { const m = {}; q.docs.forEach(d => m[d.id] = d.data()); S.stats = m; if (S.route === "stats") render(); }, e => console.warn(e));
   db.collection("materials").onSnapshot(q => { const m = {}; q.docs.forEach(d => m[d.id] = d.data()); S.materials = m; render(); }, e => console.warn(e));
   db.collection("sessions").where("status","==","open").onSnapshot(q => { const o={}; q.docs.forEach(d => o[d.id] = d.data()); S.openSessions = o; render(); }, onErr);
@@ -673,6 +694,7 @@ function bindTopic(){
     let failed = false;
     for (const k of cardIds){ if (await queueWrite("cards/"+k, () => S.db.doc("cards/"+k).delete()) === false) failed = true; }
     for (const k of sessIds){ if (await queueWrite("sessions/"+k, () => S.db.doc("sessions/"+k).delete()) === false) failed = true; }
+    for (const k of Object.keys(S.kcs).filter(k => S.kcs[k].topicId === id)){ if (await queueWrite("kcs/"+k, () => S.db.doc("kcs/"+k).delete()) === false) failed = true; }
     if (failed){ toast("Couldn't delete everything. The topic is kept; try again.", 4500); return; }
     if (S.live && S.live.topicId === id) S.live = null;
     if (await queueWrite("topics/"+id, () => S.db.doc("topics/"+id).delete()) === false){ toast("Couldn't delete the topic. Try again.", 4500); return; }
@@ -842,6 +864,7 @@ function applyControl(sess, ctl){
   if (ctl.course && ctl.course.level && ctl.course.ch) up.coursePos = {level: String(ctl.course.level), ch: Number(ctl.course.ch) || 1, at: nowIso()};
   if (ctl.record && String(ctl.record).trim().length > 8) up.records = (t.records||[]).concat([{at: nowIso(), text: String(ctl.record).slice(0,300)}]).slice(-40);
   saveTopic(id, up);
+  if (up.plan) syncKcs(id);
 }
 
 async function finishSession(silent){
@@ -902,6 +925,7 @@ ${transcript}`;
       up.resources = (t.resources||[]).concat(out.resources.filter(r => r && r.title && !seen.has(String(r.title).toLowerCase())).map(r => ({title:String(r.title), url: /^https?:\/\//.test(r.url||"") ? r.url : "", why:String(r.why||"")}))).slice(-12);
     }
     if (await saveTopic(sess.topicId, up) === false) throw Object.assign(new Error("save failed"), {code:"save_failed"});
+    if (up.plan) syncKcs(sess.topicId);
     let added = 0, cardsFailed = 0;
     if (out && Array.isArray(out.cards)){
       const okTypes = hasVocab ? ["choose","fix","apply","explain"] : ["choose","fix","apply","explain","word"];
@@ -1403,7 +1427,7 @@ function bindSettings(){
   const paint = () => $$("#depthSeg button").forEach(b => b.classList.toggle("on", b.dataset.d === depth)); paint();
   $$("#depthSeg button").forEach(b => b.onclick = () => { depth = b.dataset.d; paint(); });
   $("#sSave").onclick = async () => { const ok = await saveSettings({vault:$("#sVault").value.trim()||"Obsidian Vault", folder:$("#sFolder").value.trim().replace(/^\/+|\/+$/g,"")||"Learning", weekdayMin:Math.max(5, +$("#sWd").value||15), weekendMin:Math.max(5, +$("#sWe").value||40), depth}); toast(ok === false ? "Couldn't save your settings. Try again." : "Saved", ok === false ? 4500 : 2600); };
-  const dump = () => JSON.stringify({exportedAt:nowIso(), profile:S.profile, settings:S.settings, topics:S.topics, cards:S.cards, stats:S.stats}, null, 1);
+  const dump = () => JSON.stringify({exportedAt:nowIso(), profile:S.profile, settings:S.settings, topics:S.topics, cards:S.cards, stats:S.stats, kcs:S.kcs}, null, 1);
   const bd = $("#bkDl"); if (bd) bd.onclick = async () => { try{ await S.dl.save({filename:"lernpfad-backup-" + ymd(Date.now()) + ".json", data: dump()}); }catch(e){ if (e && e.code !== "declined") toast("Couldn't save the file here."); } };
   const bc = $("#bkCp"); if (bc) bc.onclick = () => copyText(dump());
   $("#bkBtn").onclick = () => $("#bkIn").click();
@@ -1413,12 +1437,13 @@ function bindSettings(){
     try{ d = JSON.parse(await f.text()); }catch(err){ d = null; }
     inp.value = "";
     const isObj = v => v && typeof v === "object" && !Array.isArray(v);
-    if (!isObj(d) || !(isObj(d.topics) || isObj(d.cards) || isObj(d.profile)) || [d.topics, d.cards, d.stats, d.profile].some(v => v != null && !isObj(v))){ toast("That file isn't a Lernpfad backup."); return; }
+    if (!isObj(d) || !(isObj(d.topics) || isObj(d.cards) || isObj(d.profile)) || [d.topics, d.cards, d.stats, d.profile, d.kcs].some(v => v != null && !isObj(v))){ toast("That file isn't a Lernpfad backup."); return; }
     if (!(await confirmBox("Restore this backup? Topics and cards with the same id are overwritten; others stay.", "Restore"))) return;
     let ok = 0, bad = 0; const tally = r => { if (r === false) bad++; else ok++; };
     if (d.profile) tally(await saveProfile(d.profile));
     for (const [id,t] of Object.entries(d.topics||{})) tally(await saveTopic(id, t));
     for (const [id,c] of Object.entries(d.cards||{})) tally(await saveCard(id, c));
+    for (const [id,k] of Object.entries(d.kcs||{})) tally(await saveKc(id, k));
     for (const [day,x] of Object.entries(d.stats||{})){ S.stats[day] = x; tally(await queueWrite("stats/"+day, () => S.db.doc("stats/"+day).set(clean(x)))); }
     toast(bad ? "Restored " + ok + " of " + (ok + bad) + " items. Some couldn't be saved; try again." : "Restored", bad ? 5000 : 2600);
   };
