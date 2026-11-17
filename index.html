@@ -14,11 +14,11 @@
 /* Apple-style look (iOS/macOS Human Interface Guidelines): system type with large titles, grouped inset cells,
    hairline separators, translucent bars, iOS controls and spring-like motion. Tint: systemOrange (like Books) with black text on filled controls; a darker orange for plain text in light mode. */
 :root{
-  --paper:#F2F2F7; --card:#FFFFFF; --sunken:#E9E9EE; --ink:#000000; --muted:rgba(60,60,67,.62); --faint:rgba(60,60,67,.32);
+  --paper:#F2F2F7; --card:#FFFFFF; --sunken:#E9E9EE; --ink:#000000; --muted:rgba(60,60,67,.78); --faint:rgba(60,60,67,.32);
   --line:rgba(60,60,67,.14); --line-strong:rgba(60,60,67,.24); --fill:rgba(120,120,128,.12); --fill2:rgba(118,118,128,.18); --thumb:#FFFFFF;
   --bar:rgba(249,249,251,.80); --side:rgba(242,242,247,.86);
-  --accent:#FF9500; --accent-soft:rgba(255,149,0,.16); --on-accent:#000000; --primary:#FF9500; --on-primary:#000000; --tint-text:#C45500; --progress:#FF9500;
-  --good:#248A3D; --good-soft:rgba(52,199,89,.14); --warn:#C93400; --warn-soft:rgba(255,149,0,.14); --bad:#D70015; --bad-soft:rgba(255,59,48,.12);
+  --accent:#FF9500; --accent-soft:rgba(255,149,0,.16); --on-accent:#000000; --primary:#FF9500; --on-primary:#000000; --tint-text:#A84600; --progress:#FF9500;
+  --good:#1A7430; --good-soft:rgba(52,199,89,.14); --warn:#C93400; --warn-soft:rgba(255,149,0,.14); --bad:#D70015; --bad-soft:rgba(255,59,48,.12);
   --switch-on:#34C759; --badge:#FF3B30; --hud:rgba(30,30,32,.86); --on-hud:#FFFFFF;
   --shadow:0 20px 60px rgba(0,0,0,.18), 0 2px 8px rgba(0,0,0,.06); --sheet-shadow:0 -4px 24px rgba(0,0,0,.06); --cellshadow:0 0 0 .5px rgba(0,0,0,.04);
   color-scheme:light;
@@ -122,7 +122,7 @@ label.f{display:flex;flex-direction:column;gap:6px;font-size:.8125rem;font-weigh
 input[type=text],textarea,select{width:100%;border:0;background:var(--fill);color:var(--ink);border-radius:10px;padding:9px 12px;font-size:1rem;font-weight:400;transition:box-shadow .2s var(--ease),background .2s}
 input[type=text]:focus,textarea:focus,select:focus{outline:none;background:var(--fill);box-shadow:0 0 0 3.5px var(--accent-soft),0 0 0 1px var(--accent) inset}
 textarea{min-height:84px;resize:vertical}
-::placeholder{color:var(--faint)}
+::placeholder{color:var(--muted)}
 label.chk{display:flex;gap:10px;align-items:center;font-weight:400;font-size:.9375rem}
 label.chk input[type=checkbox]{-webkit-appearance:none;appearance:none;flex:none;width:44px;height:27px;border-radius:99px;background:var(--fill2);position:relative;cursor:pointer;margin:0;transition:background .3s var(--spring)}
 label.chk input[type=checkbox]::after{content:"";position:absolute;top:2px;left:2px;width:23px;height:23px;border-radius:50%;background:#FFF;box-shadow:0 3px 8px rgba(0,0,0,.15),0 3px 1px rgba(0,0,0,.06);transition:transform .35s var(--spring)}
@@ -225,6 +225,7 @@ main.studying{padding-top:0;padding-bottom:0;min-width:0;overflow-x:clip}
 .stbl th:first-child,.stbl td:first-child{text-align:left}
 .stbl .muted{font-size:.8125rem}
 
+.sr-only{position:absolute;width:1px;height:1px;margin:-1px;padding:0;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap;border:0}
 /* ---- HUD toast, alerts & sheets, command palette ---- */
 .toast{position:fixed;left:50%;bottom:30px;transform:translateX(-50%);background:var(--hud);color:var(--on-hud);-webkit-backdrop-filter:saturate(180%) blur(20px);backdrop-filter:saturate(180%) blur(20px);padding:11px 20px;border-radius:99px;z-index:60;max-width:90vw;font-size:.9375rem;font-weight:500;box-shadow:0 10px 30px rgba(0,0,0,.25);animation:toastin .5s var(--spring) both}
 .modal{position:fixed;inset:0;background:rgba(0,0,0,.42);display:flex;align-items:flex-start;justify-content:center;z-index:40;padding:12vh 16px 16px;animation:fadein .25s var(--ease) both}
@@ -291,11 +292,12 @@ svg.i{width:17px;height:17px;fill:none;stroke:currentColor;stroke-width:1.8;stro
 </head>
 <body>
 <div class="app">
-  <nav class="side" id="sidenav"></nav>
+  <nav class="side" id="sidenav" aria-label="Main"></nav>
   <main id="main"><p class="muted">Loading Lernpfad…</p></main>
 </div>
-<nav class="bottom" id="bottomnav"></nav>
+<nav class="bottom" id="bottomnav" aria-label="Main"></nav>
 <div id="overlay"></div>
+<div id="toastLive" class="sr-only" role="status" aria-live="polite"></div>
 <script>
 "use strict";
 /* ---------------- utilities ---------------- */
@@ -337,8 +339,9 @@ const I = {
   spk:'<svg class="i" viewBox="0 0 24 24"><path d="M4 9v6h4l5 4V5L8 9z"/><path d="M16 9a4 4 0 0 1 0 6"/></svg>'
 };
 function toast(msg, ms=2600){
-  const d = document.createElement("div"); d.className="toast"; d.textContent=msg; d.setAttribute("role","status");
+  const d = document.createElement("div"); d.className="toast"; d.textContent=msg; d.setAttribute("aria-hidden","true");
   document.body.appendChild(d); setTimeout(()=>d.remove(), ms);
+  const lv = $("#toastLive"); if (lv){ lv.textContent = ""; setTimeout(() => { lv.textContent = msg; }, 50); }
 }
 /* opts.persistent: Escape and backdrop clicks do nothing (progress dialogs). opts.onDismiss: runs when Escape or a backdrop click closes it. */
 const FOCUSABLE = 'button:not([disabled]),input:not([disabled]),textarea:not([disabled]),select:not([disabled]),a[href],[tabindex]:not([tabindex="-1"])';
@@ -479,10 +482,10 @@ function renderNav(){
   const mac = /Mac|iPhone|iPad/.test(navigator.platform || "");
   $("#sidenav").innerHTML = '<div class="brand"><span class="logo" aria-hidden="true"><svg viewBox="0 0 16 16"><path d="M2 13c3 0 3-5 6-5s3-5 6-5"/></svg></span><span>Lernpfad</span></div>' +
     '<button class="cmdk" id="cmdkBtn">'+I.search+'<span>Search or jump to…</span><span class="sp"></span><span class="kbd">'+(mac?"⌘":"Ctrl")+'</span><span class="kbd">K</span></button>' +
-    items.map(([k,l,ic]) => '<a class="nav'+(cur===k?' on':'')+'" href="#'+k+'">'+ic+l+(k==="review"&&due?'<span class="count">'+due+'</span>':'')+'</a>').join("") +
-    '<span class="sp"></span><p class="small" style="margin:0 10px;color:var(--faint)">Synced on every device you open it on.</p>';
+    items.map(([k,l,ic]) => '<a class="nav'+(cur===k?' on':'')+'" href="#'+k+'"'+(cur===k?' aria-current="page"':'')+'>'+ic+l+(k==="review"&&due?'<span class="count">'+due+'</span>':'')+'</a>').join("") +
+    '<span class="sp"></span><p class="small" style="margin:0 10px;color:var(--muted)">Synced on every device you open it on.</p>';
   const cb = $("#cmdkBtn"); if (cb) cb.onclick = openPalette;
-  $("#bottomnav").innerHTML = items.map(([k,l,ic]) => '<a class="'+(cur===k?'on':'')+'" href="#'+k+'">'+ic+'<span>'+l+'</span>'+(k==="review"&&due?'<span class="count">'+due+'</span>':'')+'</a>').join("");
+  $("#bottomnav").innerHTML = items.map(([k,l,ic]) => '<a class="'+(cur===k?'on':'')+'" href="#'+k+'"'+(cur===k?' aria-current="page"':'')+'>'+ic+'<span>'+l+'</span>'+(k==="review"&&due?'<span class="count">'+due+'</span>':'')+'</a>').join("");
 }
 
 /* render: skip full re-render while the person is typing on a form view */
@@ -1313,9 +1316,9 @@ const dayStr = off => ymd(Date.now() + off * DAY);
 function pct(p, f){ const n = p + f; return n ? '<b>' + Math.round(100 * p / n) + '%</b> <span class="muted">' + p + '/' + n + '</span>' : '<span class="muted">–</span>'; }
 function barChart(vals, labels, tips, ariaLabel){
   const max = Math.max(1, ...vals);
-  return '<div class="chart" role="img" aria-label="' + esc(ariaLabel) + '"><div class="ymax">' + max + '</div><div class="bars">' +
-    vals.map((v, i) => '<div class="col" tabindex="0" data-tip="' + esc(tips[i]) + '"><i style="height:' + (v ? Math.max(2, Math.round(100 * v / max)) : 0) + '%"></i></div>').join("") +
-    '</div><div class="xlab">' + labels.map(l => '<span>' + esc(l) + '</span>').join("") + '</div><div class="ctip muted">Point at or tap a bar for details.</div></div>';
+  return '<div class="chart" role="group" aria-label="' + esc(ariaLabel) + '"><div class="ymax">' + max + '</div><div class="bars">' +
+    vals.map((v, i) => '<div class="col" role="button" tabindex="0" aria-label="' + esc(tips[i]) + '" data-tip="' + esc(tips[i]) + '"><i style="height:' + (v ? Math.max(2, Math.round(100 * v / max)) : 0) + '%"></i></div>').join("") +
+    '</div><div class="xlab">' + labels.map(l => '<span>' + esc(l) + '</span>').join("") + '</div><div class="ctip muted" aria-live="polite">Point at or tap a bar for details.</div></div>';
 }
 function viewStats(){
   const tid = S.statsTopic || "";
