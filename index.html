@@ -405,7 +405,7 @@ const S = {
   profile:null, settings:{}, topics:{}, cards:{}, kcs:{}, openSessions:{}, materials:{}, stats:{},
   route:"today", arg:null, live:null /* active study session */, busy:false, ctl:null, review:null
 };
-const DEFAULT_SETTINGS = { vault:"Obsidian Vault", folder:"Learning", depth:"default", weekdayMin:15, weekendMin:40, mode:"system" };
+const DEFAULT_SETTINGS = { vault:"Obsidian Vault", folder:"Learning", depth:"default", weekdayMin:15, weekendMin:40, mode:"system", retention:0.9 };
 function applyMode(mode){ const r = document.documentElement; if (mode === "light" || mode === "dark") r.setAttribute("data-mode", mode); else r.removeAttribute("data-mode"); try{ localStorage.setItem("lp-mode", mode || "system"); }catch(e){} }
 const st = () => Object.assign({}, DEFAULT_SETTINGS, S.settings || {});
 const writeQ = {};
@@ -442,6 +442,28 @@ function syncKcs(topicId){
 /* Learned KCs due now, for topics still active and steps still in the plan. */
 function kcsDue(now){
   return Object.entries(S.kcs).filter(([id, k]) => { const t = S.topics[k.topicId]; return k.s && Date.parse(k.due) <= now && t && (t.status || "active") === "active" && (t.plan || []).some(p => p.id === k.stepId); });
+}
+/* One document per review (cards and skills), the input for fitting FSRS weights later. */
+function logRevlog(itemType, itemId, topicId, g, ms, confidence){
+  if (!S.db) return;
+  const id = uid("r"), d = {itemType, itemId, topicId: topicId || null, grade: g, at: nowIso(), ms: Math.max(0, Math.min(ms || 0, 600000)), confidence: confidence || ""};
+  return queueWrite("revlog/" + id, () => S.db.doc("revlog/" + id).set(clean(d)));
+}
+/* wrong -> Again, partial -> Hard, right -> Good, right + sure + fast -> Easy */
+function gradeFor(result, sure, fast){ return {wrong:1, partial:2, right:(sure && fast) ? 4 : 3}[result] || null; }
+function gradeKc(topicId, stepId, g, ms, confidence){
+  const id = kcId(topicId, stepId), k = S.kcs[id]; if (!k) return;
+  saveKc(id, schedule(k, g, Date.now()).card);
+  logRevlog("kc", id, topicId, g, ms, confidence);
+}
+/* The tutor names the plan step its last check tested (grade.kc). The learner turn before the new tutor turn carries the confidence and timing. */
+function gradeFromControl(sess, ctl){
+  const gr = ctl && ctl.grade, n = sess.turns.length; if (!gr || !gr.kc) return;
+  const lt = sess.turns[n - 2], pt = sess.turns[n - 3];
+  const m = lt && /confidence: (\w+)/.exec(lt.text || ""), conf = m ? m[1] : "";
+  const ms = lt && pt ? Date.parse(lt.at) - Date.parse(pt.at) : 0;
+  const g = gradeFor(gr.result, conf === "sure", ms > 0 && ms < 20000); // shortcut: "fast" is under 20 s; tune with review-log data
+  if (g) gradeKc(sess.topicId, String(gr.kc), g, ms, conf);
 }
 const saveSession = sess => { if(!S.db) return; return queueWrite("sessions/"+sess.id, () => S.db.doc("sessions/"+sess.id).set(clean(sess))); };
 function clean(o){ return JSON.parse(JSON.stringify(o, (k,v) => v === undefined ? null : v)); }
@@ -718,11 +740,12 @@ METHOD
 10. Course materials: when the topic lists the learner's own books, use their syllabus as the backbone of the plan, in its order, starting where the probe places the learner. When you teach a point, name where it lives in the books (e.g. "Kursbuch A2, Kapitel 5, p.54; Grammatik A1–B1, adjectives section; more practice: Übungsbuch A2 Kapitel 5"). You only have the contents index, so never invent exercise numbers or quote the books. Report the chapter you are working in with "course".
 11. Spoken answers: the learner often answers by speech-to-text and switches between English and German mid-answer. Read answers charitably: a misheard word, odd spelling, missing capitals or punctuation are usually transcription, not language mistakes, so don't grade them. Judge the German he clearly produced (word choice, word order, endings, verb forms). If a key word is too garbled to judge, ask him to repeat just that part instead of guessing. When an answer ends with a "[Spoken: "…" · …]" note from his voice app: the text above the note is what he means (he corrected it); the quoted transcript is what he actually said; the rest describes how it sounded (pauses and where, fillers, restarts, German/English share and the English parts, words the recognizer found unclear, edits he made after speaking, and a certainty rating). Use it like a teacher listening: long pauses or restarts right before a word mean that word or structure is shaky; English parts show vocabulary he didn't have in German; edits after speaking show what he could fix on reflection but not produce live. Grade the corrected text, but mention live-production gaps when they matter, and let the certainty rating guide whether to move on or reinforce. Unclear-to-recognizer words may hint at pronunciation; mention that only gently and only if it repeats. The note may come from the app's built-in dictation instead: there "(same as the text above)" means he sent the transcript unedited, the German/English split comes from him tapping DE/EN as he switched (an English word recognized in German mode, or the reverse, can come out garbled, so treat odd words near a switch as transcription), and pause timings are approximate.
 12. Tone: warm, direct, no filler, no praise inflation. Do not narrate your method. Plain text math (e.g. θ, ẋ = Ax + Bu); no LaTeX.
+13. Graded skills: when their previous answer was a check on one plan step, set grade.kc to that step's id; the app schedules that skill from your grade. In a practice session, ask one closed-book question per listed skill, one skill per turn, mixed order, no explanation before they answer.
 
 OUTPUT FORMAT (strict)
 Write the message for the learner in Markdown. Do NOT put the check question in the message: it goes in "ask.prompt". Then a line containing only ===CONTROL=== and then ONE JSON object:
 {"phase":"goal|probe|teach|practice|wrap",
- "grade":{"result":"right|partial|wrong|none","note":"one line on their previous answer, or empty"},
+ "grade":{"result":"right|partial|wrong|none","note":"one line on their previous answer, or empty","kc":"id of the plan step (e.g. p2) their previous answer tested, else null"},
  "ask":{"type":"mc|short|predict|none","prompt":"the question","options":["only for mc"],"correct":0,"explain":"why the answer is right (shown after they answer); for short/predict also the expected answer"},
  "goal":"concrete goal if just established, else null",
  "probe":{"done":true,"level":"short label of where they are","strands":[{"name":"","floor":"","ceiling":"","misconceptions":[""]}]} or null,
@@ -784,7 +807,7 @@ function minutesLeft(sess){ return Math.max(0, Math.round(sess.budgetMin - (Date
 function buildMessages(sess){
   const t = S.topics[sess.topicId] || {};
   const head = TEACHER_RULES + "\n\n=== LEARNER PROFILE ===\n" + profileText() + "\n\n=== TOPIC ===\n" + topicText(t) +
-    "\n\n=== SESSION ===\nKind: " + (sess.kind === "practice" ? "practice (mixed problems on learned material)" : "lesson") + "\nDevice/day: " + dayPlan().label + "\nMinutes left: " + minutesLeft(sess) + " of " + sess.budgetMin;
+    "\n\n=== SESSION ===\nKind: " + (sess.kind === "practice" ? "practice (mixed problems on learned material)" : "lesson") + "\nDevice/day: " + dayPlan().label + "\nMinutes left: " + minutesLeft(sess) + " of " + sess.budgetMin + (sess.kcIds && sess.kcIds.length ? "\nSkills due for practice (plan step id: title): " + sess.kcIds.map(sid => sid + ": " + ((S.kcs[kcId(sess.topicId, sid)] || {}).title || "")).join("; ") : "");
   const msgs = [{role:"user", content: head}];
   const turns = sess.turns.slice(-18);
   if (sess.turns.length > 18) msgs.push({role:"user", content:"(Earlier turns of this session are omitted. The plan and records above are current.)"});
@@ -865,6 +888,7 @@ function applyControl(sess, ctl){
   if (ctl.record && String(ctl.record).trim().length > 8) up.records = (t.records||[]).concat([{at: nowIso(), text: String(ctl.record).slice(0,300)}]).slice(-40);
   saveTopic(id, up);
   if (up.plan) syncKcs(id);
+  gradeFromControl(sess, ctl);
 }
 
 async function finishSession(silent){
@@ -1248,6 +1272,7 @@ function spokenNote(ta, sent, confidence){
 /* ---------------- spaced repetition (FSRS-4.5, local: costs no Claude usage) ---------------- */
 const W = [0.4872,1.4003,3.7145,13.8206,5.1618,1.2298,0.8975,0.031,1.6474,0.1367,1.0461,2.1072,0.0793,0.3246,1.587,0.2272,2.8755];
 const FACTOR = 19/81, DECAY = -0.5;
+const intervalDays = (s, r) => s / FACTOR * (Math.pow(r, 1 / DECAY) - 1);
 const clampD = d => Math.min(10, Math.max(1, d));
 const retr = (t, s) => Math.pow(1 + FACTOR * t / s, DECAY);
 const initD = g => clampD(W[4] - (g - 3) * W[5]);
@@ -1262,7 +1287,7 @@ function schedule(c, g, now){
     n.d = nextD(c.d, g); n.s = g === 1 ? Math.min(sForget(c.d, c.s, r), c.s) : sRecall(c.d, c.s, r, g);
   }
   if (g === 1){ n.lapses = (c.lapses||0) + (c.s ? 1 : 0); days = 10 / 1440; }
-  else days = Math.max(1, Math.round(n.s));
+  else days = Math.max(1, Math.round(intervalDays(n.s, st().retention)));
   n.reps = (c.reps||0) + 1; n.last = new Date(now).toISOString(); n.due = new Date(now + days * DAY).toISOString();
   return {card:n, days};
 }
@@ -1307,7 +1332,7 @@ function drawCard(){
     if (R.typed){ const p = document.createElement("p"); p.className = "small muted"; p.textContent = "You wrote: " + R.typed; $(".flash").appendChild(p); }
     const h = $("#hear"); if (h) h.onclick = () => speak(c.back.replace(/[*_`#>]/g,""));
     $$("[data-g]").forEach(b => b.onclick = () => {
-      const g = +b.dataset.g; logReview(c, g, Date.now() - (R.t0 || Date.now())); const {card} = schedule(c, g, Date.now()); saveCard(id, card);
+      const g = +b.dataset.g; const ms = Date.now() - (R.t0 || Date.now()); logReview(c, g, ms); logRevlog("card", id, c.topicId, g, ms, ""); const {card} = schedule(c, g, Date.now()); saveCard(id, card);
       if (g === 1) R.queue.push(id);
       R.i++; R.shown = false; R.typed = ""; R.done++; drawCard();
     });
@@ -1415,7 +1440,7 @@ function viewSettings(){
    '<div class="card stack"><div class="bar"><div><h2>Appearance</h2><p class="small muted" style="margin:2px 0 0">Follows your device unless you pick one.</p></div><span class="sp"></span><div class="seg" id="modeSeg" role="group" aria-label="Appearance"><button data-m="system">System</button><button data-m="light">Light</button><button data-m="dark">Dark</button></div></div></div>' +
    '<div class="card stack"><h2>Obsidian</h2><p class="small muted" style="margin:0">The daily Claude sync copies every topic note into this folder of your vault. On any device you can also use Copy, Download .md (opens the share sheet on iPhone) or Open in Obsidian on a topic\'s note.</p>' +
     '<label class="f" for="sVault">Vault name<input type="text" id="sVault" value="'+esc(s.vault)+'"></label><label class="f" for="sFolder">Folder in the vault<input type="text" id="sFolder" value="'+esc(s.folder)+'"></label></div>' +
-   '<div class="card stack"><h2>Sessions</h2><label class="f" for="sWd">Weekday session length (minutes)<input type="text" inputmode="numeric" id="sWd" value="'+esc(s.weekdayMin)+'"></label><label class="f" for="sWe">Saturday session length (minutes)<input type="text" inputmode="numeric" id="sWe" value="'+esc(s.weekendMin)+'"></label>' +
+   '<div class="card stack"><h2>Sessions</h2><label class="f" for="sWd">Weekday session length (minutes)<input type="text" inputmode="numeric" id="sWd" value="'+esc(s.weekdayMin)+'"></label><label class="f" for="sWe">Saturday session length (minutes)<input type="text" inputmode="numeric" id="sWe" value="'+esc(s.weekendMin)+'"></label><label class="f" for="sRet">Target retention (%)<input type="text" inputmode="numeric" id="sRet" value="'+esc(Math.round(s.retention*100))+'"></label><span class="small muted" style="font-weight:400">How sure you want to be of remembering a card or skill when it comes back. Higher means more reviews. 90 is the usual choice.</span>' +
     '<div class="f">Teaching depth<div class="seg" id="depthSeg" role="group" aria-label="Teaching depth"><button data-d="quick">Fast</button><button data-d="default">Balanced</button><button data-d="complex">Deep</button></div><span class="small muted" style="font-weight:400">Fast replies instantly and uses the least of your Claude usage. Deep thinks longer and suits hard robotics or math topics.</span></div></div>' +
    '<div class="bar"><span class="sp"></span><button class="btn primary" id="sSave">Save settings</button></div>' +
    '<div class="card stack"><h2>Backup</h2><p class="small muted" style="margin:0">Everything already syncs between your devices. A backup file is for safekeeping.</p><div class="bar">'+(S.dl?'<button class="btn" id="bkDl">Download backup (.json)</button>':'<button class="btn" id="bkCp">Copy backup</button>')+'<button class="btn" id="bkBtn" type="button">Restore from backup</button><input type="file" id="bkIn" accept=".json,application/json" style="display:none"></div></div></div>';
@@ -1426,7 +1451,7 @@ function bindSettings(){
   $$("#modeSeg button").forEach(b => b.onclick = () => { applyMode(b.dataset.m); saveSettings({mode:b.dataset.m}); pm(); });
   const paint = () => $$("#depthSeg button").forEach(b => b.classList.toggle("on", b.dataset.d === depth)); paint();
   $$("#depthSeg button").forEach(b => b.onclick = () => { depth = b.dataset.d; paint(); });
-  $("#sSave").onclick = async () => { const ok = await saveSettings({vault:$("#sVault").value.trim()||"Obsidian Vault", folder:$("#sFolder").value.trim().replace(/^\/+|\/+$/g,"")||"Learning", weekdayMin:Math.max(5, +$("#sWd").value||15), weekendMin:Math.max(5, +$("#sWe").value||40), depth}); toast(ok === false ? "Couldn't save your settings. Try again." : "Saved", ok === false ? 4500 : 2600); };
+  $("#sSave").onclick = async () => { const ok = await saveSettings({vault:$("#sVault").value.trim()||"Obsidian Vault", folder:$("#sFolder").value.trim().replace(/^\/+|\/+$/g,"")||"Learning", weekdayMin:Math.max(5, +$("#sWd").value||15), weekendMin:Math.max(5, +$("#sWe").value||40), retention:Math.min(97, Math.max(70, +$("#sRet").value||90))/100, depth}); toast(ok === false ? "Couldn't save your settings. Try again." : "Saved", ok === false ? 4500 : 2600); };
   const dump = () => JSON.stringify({exportedAt:nowIso(), profile:S.profile, settings:S.settings, topics:S.topics, cards:S.cards, stats:S.stats, kcs:S.kcs}, null, 1);
   const bd = $("#bkDl"); if (bd) bd.onclick = async () => { try{ await S.dl.save({filename:"lernpfad-backup-" + ymd(Date.now()) + ".json", data: dump()}); }catch(e){ if (e && e.code !== "declined") toast("Couldn't save the file here."); } };
   const bc = $("#bkCp"); if (bc) bc.onclick = () => copyText(dump());
