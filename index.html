@@ -428,13 +428,18 @@ const saveKc = (id, k) => { if(!S.db) return; S.kcs[id] = k; return queueWrite("
 /* A knowledge component (KC) is one plan step. Same FSRS fields as a card, so schedule() works on it unchanged. */
 const kcId = (topicId, stepId) => topicId + "-" + stepId;
 function syncKcs(topicId){
-  const t = S.topics[topicId]; if (!t || !Array.isArray(t.plan)) return Promise.resolve();
-  const now = new Date().toISOString(), jobs = [];
+  const t = S.topics[topicId]; if (!S.kcsLoaded || !t || !Array.isArray(t.plan)) return Promise.resolve(); // a KC missing from an unloaded S.kcs would be overwritten
+  const now = new Date().toISOString(), jobs = []; let nd = 0;
   t.plan.forEach((p, i) => {
     const id = kcId(topicId, p.id), have = S.kcs[id];
-    if (have){ if (have.title !== p.title) jobs.push(saveKc(id, Object.assign({}, have, {title: p.title}))); return; }
+    if (have){
+      if (p.status === "done" && !have.s) jobs.push(saveKc(id, Object.assign(schedule(have, 3, Date.now()).card, {title: p.title, stage: "solo"})));
+      else if (have.title !== p.title) jobs.push(saveKc(id, Object.assign({}, have, {title: p.title})));
+      return;
+    }
     const kc = {topicId, stepId: p.id, title: p.title, kind:"concept", prereqs: i ? [kcId(topicId, t.plan[i-1].id)] : [], stage: p.status === "done" ? "solo" : p.status === "doing" ? "completion" : "example", createdAt: now, due: now, reps:0, lapses:0};
-    if (p.status === "done") Object.assign(kc, {s: W[2], d: initD(3), last: now, reps:1}); // learned: as if answered Good once, due today
+    // shortcut: the spec says "due today"; spread over 7 days so a migrated topic doesn't flood Today and block its next step
+    if (p.status === "done") Object.assign(kc, {s: W[2], d: initD(3), last: now, reps:1, due: new Date(Date.now() + (nd++ % 7) * 86400000).toISOString()});
     jobs.push(saveKc(id, kc));
   });
   return Promise.all(jobs);
@@ -459,9 +464,10 @@ function gradeKc(topicId, stepId, g, ms, confidence){
 /* The tutor names the plan step its last check tested (grade.kc). The learner turn before the new tutor turn carries the confidence and timing. */
 function gradeFromControl(sess, ctl){
   const gr = ctl && ctl.grade, n = sess.turns.length; if (!gr || !gr.kc) return;
-  const lt = sess.turns[n - 2], pt = sess.turns[n - 3];
-  const m = lt && /confidence: (\w+)/.exec(lt.text || ""), conf = m ? m[1] : "";
-  const ms = lt && pt ? Date.parse(lt.at) - Date.parse(pt.at) : 0;
+  const lt = sess.turns[n - 2]; if (!lt || lt.r !== "l") return;
+  const pt = n > 2 && sess.turns[n - 3].r === "t" ? sess.turns[n - 3] : null;
+  const m = /confidence: (\w+)/.exec(lt.text || ""), conf = m ? m[1] : "";
+  const ms = pt ? Date.parse(lt.at) - Date.parse(pt.at) : 0;
   const g = gradeFor(gr.result, conf === "sure", ms > 0 && ms < 20000); // shortcut: "fast" is under 20 s; tune with review-log data
   if (g) gradeKc(sess.topicId, String(gr.kc), g, ms, conf);
 }
@@ -499,7 +505,7 @@ async function init(){
   db.doc("lp/settings").onSnapshot(s => { S.settings = s.exists ? s.data() : {}; applyMode(st().mode); render(); }, onErr);
   db.collection("topics").onSnapshot(q => { const t={}; q.docs.forEach(d => t[d.id] = Object.assign({}, d.data())); S.topics = t; if(!tOnce && !q.metadata.fromCache){tOnce=true; mark(); migrateKcs();} else render(); }, onErr);
   db.collection("cards").onSnapshot(q => { const c={}; q.docs.forEach(d => c[d.id] = Object.assign({}, d.data())); S.cards = c; if(!cOnce && !q.metadata.fromCache){cOnce=true; mark();} else render(); }, onErr);
-  db.collection("kcs").onSnapshot(q => { const m = {}; q.docs.forEach(d => m[d.id] = Object.assign({}, d.data())); S.kcs = m; if (!kOnce && !q.metadata.fromCache){ kOnce = true; migrateKcs(); } render(); }, e => console.warn(e));
+  db.collection("kcs").onSnapshot(q => { const m = {}; q.docs.forEach(d => m[d.id] = Object.assign({}, d.data())); S.kcs = m; if (!kOnce && !q.metadata.fromCache){ kOnce = true; S.kcsLoaded = true; migrateKcs(); } render(); }, e => console.warn(e));
   db.collection("stats").onSnapshot(q => { const m = {}; q.docs.forEach(d => m[d.id] = d.data()); S.stats = m; if (S.route === "stats") render(); }, e => console.warn(e));
   db.collection("materials").onSnapshot(q => { const m = {}; q.docs.forEach(d => m[d.id] = d.data()); S.materials = m; render(); }, e => console.warn(e));
   db.collection("sessions").where("status","==","open").onSnapshot(q => { const o={}; q.docs.forEach(d => o[d.id] = d.data()); S.openSessions = o; render(); }, onErr);
@@ -588,14 +594,14 @@ function buildPlan(now, budgetMin){
   const due = kcsDue(now).sort((a, b) => a[1].due < b[1].due ? -1 : 1), take = Math.min(due.length, 5, Math.floor(left / 1.5));
   const byTopic = {}; due.slice(0, take).forEach(([, k]) => (byTopic[k.topicId] ||= []).push(k.stepId)); left -= take * 1.5;
   const practice = Object.entries(byTopic).map(([topicId, stepIds]) => ({topicId, stepIds}));
-  const learn = [];
+  const learn = [], inPractice = new Set(practice.flatMap(x => x.stepIds.map(sid => kcId(x.topicId, sid))));
   const topics = topicList(t => t.status === "active" && fitOk(t, dayPlan().kind)).sort((a, b) => (b.lastStudied || "").localeCompare(a.lastStudied || ""));
   for (const t of topics){
     if (learn.length >= 2 || left < 5) break;
     if (!(t.plan || []).length){ learn.push({topicId: t.id, stepId: null, title: "Start: " + t.title}); left -= 5; continue; }
     const step = t.plan.find(x => x.status !== "done"); if (!step) continue;
     const kc = S.kcs[kcId(t.id, step.id)];
-    if (kc && (kc.prereqs || []).map(id => S.kcs[id]).some(q => q && q.s && Date.parse(q.due) <= now)) continue; // prerequisite is due today: review it first
+    if (kc && (kc.prereqs || []).some(id => inPractice.has(id))) continue; // prerequisite is on today's practice list: review it first
     learn.push({topicId: t.id, stepId: step.id, title: step.title}); left -= 5;
   }
   return {cards, practice, learn};
@@ -1478,7 +1484,7 @@ function bindSettings(){
   $$("#modeSeg button").forEach(b => b.onclick = () => { applyMode(b.dataset.m); saveSettings({mode:b.dataset.m}); pm(); });
   const paint = () => $$("#depthSeg button").forEach(b => b.classList.toggle("on", b.dataset.d === depth)); paint();
   $$("#depthSeg button").forEach(b => b.onclick = () => { depth = b.dataset.d; paint(); });
-  $("#sSave").onclick = async () => { const ok = await saveSettings({vault:$("#sVault").value.trim()||"Obsidian Vault", folder:$("#sFolder").value.trim().replace(/^\/+|\/+$/g,"")||"Learning", weekdayMin:Math.max(5, +$("#sWd").value||15), weekendMin:Math.max(5, +$("#sWe").value||40), retention:Math.min(97, Math.max(70, +$("#sRet").value||90))/100, depth}); toast(ok === false ? "Couldn't save your settings. Try again." : "Saved", ok === false ? 4500 : 2600); };
+  $("#sSave").onclick = async () => { const ok = await saveSettings({vault:$("#sVault").value.trim()||"Obsidian Vault", folder:$("#sFolder").value.trim().replace(/^\/+|\/+$/g,"")||"Learning", weekdayMin:Math.max(5, +$("#sWd").value||15), weekendMin:Math.max(5, +$("#sWe").value||40), retention:Math.min(97, Math.max(70, (v => v > 0 && v <= 1 ? v * 100 : v)(+$("#sRet").value) || 90))/100, depth}); toast(ok === false ? "Couldn't save your settings. Try again." : "Saved", ok === false ? 4500 : 2600); };
   const dump = () => JSON.stringify({exportedAt:nowIso(), profile:S.profile, settings:S.settings, topics:S.topics, cards:S.cards, stats:S.stats, kcs:S.kcs}, null, 1);
   const bd = $("#bkDl"); if (bd) bd.onclick = async () => { try{ await S.dl.save({filename:"lernpfad-backup-" + ymd(Date.now()) + ".json", data: dump()}); }catch(e){ if (e && e.code !== "declined") toast("Couldn't save the file here."); } };
   const bc = $("#bkCp"); if (bc) bc.onclick = () => copyText(dump());

@@ -6,6 +6,8 @@ async function runTests(){
   const wait = ms => new Promise(r => setTimeout(r, ms));
   const run = async (name, fn) => { try{ await fn(); }catch(e){ ok(name + " (threw)", false, String(e && e.stack || e)); } };
 
+  const revlogs = () => Object.entries(window.__stub.store).filter(([k]) => k.startsWith("revlog/")).map(([, v]) => v);
+
   /* ---- Task 1: KC data layer ---- */
   await run("syncKcs", async () => {
     await saveTopic("tT", {title:"T", status:"active", plan:[{id:"p1",title:"A",status:"done"},{id:"p2",title:"B",status:"doing"},{id:"p3",title:"C",status:"todo"}]});
@@ -20,7 +22,7 @@ async function runTests(){
     ok("second run changes nothing", JSON.stringify(S.kcs) === snap);
     await saveTopic("tT", {plan:[{id:"p1",title:"A2",status:"done"},{id:"p2",title:"B",status:"done"},{id:"p3",title:"C",status:"todo"}]}); await wait(80);
     const s1 = k("p1").s; await syncKcs("tT"); await wait(120);
-    ok("title updates, state kept; a step turning done does not reset it", k("p1").title === "A2" && k("p1").s === s1 && !k("p2").s);
+    ok("title updates, state kept; a step turning done later enters review", k("p1").title === "A2" && k("p1").s === s1 && k("p2").s > 0 && Date.parse(k("p2").due) > Date.now(), JSON.stringify(k("p2")));
     await saveTopic("tN", {title:"N", status:"active"}); await wait(60);
     await syncKcs("tN");
     ok("topic without a plan makes no KCs", !Object.keys(S.kcs).some(x => x.startsWith("tN-")));
@@ -28,8 +30,45 @@ async function runTests(){
     ok("KC of a removed step is never due", !kcsDue(Date.now() + 9e9).some(([id]) => id === kcId("tT","p1")));
   });
 
+  /* ---- review fixes ---- */
+  await run("syncKcs never writes before the stored KCs are known", async () => {
+    await saveTopic("tL", {title:"L", status:"active", plan:[{id:"p1",title:"A",status:"done"}]}); await wait(80);
+    const was = S.kcsLoaded; S.kcsLoaded = false;
+    await syncKcs("tL"); await wait(120);
+    ok("not loaded: nothing created or overwritten", !S.kcs[kcId("tL","p1")]);
+    S.kcsLoaded = was; await syncKcs("tL"); await wait(120);
+    ok("loaded: created", !!S.kcs[kcId("tL","p1")]);
+  });
+  await run("migration spreads done steps over a week", async () => {
+    await saveTopic("tW", {title:"W", status:"active", plan:Array.from({length:10}, (_, i) => ({id:"p"+(i+1), title:"S"+(i+1), status:"done"}))}); await wait(80);
+    await syncKcs("tW"); await wait(150);
+    const dues = Object.entries(S.kcs).filter(([id]) => id.startsWith("tW-")).map(([, k]) => Date.parse(k.due));
+    const days = new Set(dues.map(d => Math.round((d - Date.now()) / 86400000)));
+    ok("first due today, none beyond a week, several different days", dues.length === 10 && Math.min(...dues) <= Date.now() && Math.max(...dues) <= Date.now() + 7 * 86400000 && days.size >= 5, [...days].join());
+  });
+  await run("gradeFromControl only grades an answer to a tutor question", async () => {
+    await saveTopic("tH", {title:"H", status:"active", plan:[{id:"p1",title:"A",status:"todo"},{id:"p2",title:"B",status:"done"}]}); await wait(80);
+    await syncKcs("tH"); await wait(150);
+    const t0 = Date.now() - 60000, T = (r, ms) => ({r, text: r === "l" ? "My answer: x (confidence: sure)" : "q", at: new Date(t0 + ms).toISOString()});
+    const n0 = revlogs().filter(x => x.itemId === kcId("tH","p2")).length;
+    gradeFromControl({topicId:"tH", turns:[T("t",0)]}, {grade:{result:"right", kc:"p2"}}); await wait(120);
+    ok("session start (no learner turn) grades nothing", revlogs().filter(x => x.itemId === kcId("tH","p2")).length === n0);
+    gradeFromControl({topicId:"tH", turns:[T("t",0), T("l",1000), T("l",2000), T("t",2500)]}, {grade:{result:"right", kc:"p2"}}); await wait(120);
+    const last = revlogs().filter(x => x.itemId === kcId("tH","p2")).sort((a, b) => a.at < b.at ? -1 : 1).pop();
+    ok("two learner turns in a row: no timing, so Good not Easy", last && last.grade === 3, JSON.stringify(last));
+  });
+  await run("a due prerequisite beyond the practice cap does not block new steps", async () => {
+    const keep = {t: S.topics, c: S.cards, k: S.kcs}, now = Date.now();
+    try{
+      S.cards = {};
+      S.topics = {X: {title:"X", status:"active", plan:[...Array.from({length:6}, (_, i) => ({id:"p"+(i+1), title:"S", status:"done"})), {id:"p7", title:"Next", status:"todo"}]}};
+      S.kcs = Object.fromEntries(Array.from({length:7}, (_, i) => [kcId("X","p"+(i+1)), {topicId:"X", stepId:"p"+(i+1), title:"S", s: i < 6 ? 3 : undefined, d:5, due: new Date(now - (100 - i) * 60000).toISOString(), prereqs: i ? [kcId("X","p"+i)] : []}]));
+      const p = buildPlan(now, 40);
+      ok("5 oldest skills practised, p6 left over, p7 still offered", p.practice[0].stepIds.length === 5 && !p.practice[0].stepIds.includes("p6") && p.learn.length === 1 && p.learn[0].stepId === "p7", JSON.stringify(p));
+    } finally { S.topics = keep.t; S.cards = keep.c; S.kcs = keep.k; }
+  });
+
   /* ---- Task 2: review log, grading, target retention ---- */
-  const revlogs = () => Object.entries(window.__stub.store).filter(([k]) => k.startsWith("revlog/")).map(([, v]) => v);
   await run("intervalDays", async () => {
     ok("90% retention keeps interval = stability", Math.abs(intervalDays(10, 0.9) - 10) < 1e-9, intervalDays(10, 0.9));
     ok("higher retention shortens, lower lengthens", intervalDays(10, 0.95) < 10 && intervalDays(10, 0.8) > 10);
